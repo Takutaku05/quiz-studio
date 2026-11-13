@@ -41,6 +41,14 @@ function toPublicUser(stored: StoredUser): User {
 }
 
 export class LocalAuthRepository implements AuthRepository {
+  private readonly listeners = new Set<(user: User | null) => void>();
+
+  private notify(user: User | null): void {
+    for (const listener of this.listeners) {
+      listener(user);
+    }
+  }
+
   async getCurrentUser(): Promise<User | null> {
     const userId = localStorage.getItem(STORAGE_KEYS.SESSION_USER_ID);
     if (!userId) return null;
@@ -72,7 +80,9 @@ export class LocalAuthRepository implements AuthRepository {
 
     writeJson(STORAGE_KEYS.USERS, [...users, newUser]);
     localStorage.setItem(STORAGE_KEYS.SESSION_USER_ID, newUser.id);
-    return toPublicUser(newUser);
+    const publicUser = toPublicUser(newUser);
+    this.notify(publicUser);
+    return publicUser;
   }
 
   async signIn(email: string, password: string): Promise<User> {
@@ -85,11 +95,25 @@ export class LocalAuthRepository implements AuthRepository {
       throw new Error('メールアドレスまたはパスワードが正しくありません。');
     }
     localStorage.setItem(STORAGE_KEYS.SESSION_USER_ID, found.id);
-    return toPublicUser(found);
+    const publicUser = toPublicUser(found);
+    this.notify(publicUser);
+    return publicUser;
+  }
+
+  async signInWithGoogle(): Promise<void> {
+    throw new Error('GoogleログインはSupabase連携時のみ利用できます。');
   }
 
   async signOut(): Promise<void> {
     localStorage.removeItem(STORAGE_KEYS.SESSION_USER_ID);
+    this.notify(null);
+  }
+
+  onAuthStateChange(callback: (user: User | null) => void): () => void {
+    this.listeners.add(callback);
+    return () => {
+      this.listeners.delete(callback);
+    };
   }
 }
 

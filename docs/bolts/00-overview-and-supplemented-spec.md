@@ -33,3 +33,4 @@
 | Bolt 03 | 認証 & ストレージリポジトリ | Application / Infra | サインアップ/サインイン/ログアウト、ユーザー単位データ分離、問題集CRUD |
 | Bolt 04 | UI: 認証 & ダッシュボード & CSVアップロード | UI (Pages/Modals) | `/login`、`/` 一覧・削除、D&D対応CSVモーダル・エラー表示 |
 | Bolt 05 | UI: クイズプレイ画面（3フェーズ） | UI (Quiz Player) | `/quiz/:quizId` 設定・出題（一問一答/テスト）・リザルト・誤答再挑戦 |
+| Bolt 06 | Google OAuth ログイン & 認証状態同期 | Auth / UI | `signInWithOAuth`、`onAuthStateChange`、OAuthエラー回収、`/login` Googleログイン導線 |

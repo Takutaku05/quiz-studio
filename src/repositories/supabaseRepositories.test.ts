@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  consumeAuthRedirectError,
   SupabaseAuthRepository,
   SupabaseQuizRepository,
   toAuthErrorMessage,
@@ -22,6 +23,102 @@ describe('toAuthErrorMessage', () => {
     expect(toAuthErrorMessage('User already registered')).toBe(
       'このメールアドレスは既に登録されています。',
     );
+    expect(toAuthErrorMessage('Unsupported provider: provider is not enabled')).toBe(
+      'Googleログインは現在有効になっていません。Supabaseダッシュボードの設定を確認してください。',
+    );
+    expect(toAuthErrorMessage('access_denied')).toBe(
+      'Googleログインがキャンセルされました。',
+    );
+  });
+});
+
+describe('SupabaseAuthRepository.signInWithGoogle & onAuthStateChange', () => {
+  it('calls signInWithOAuth with google provider and login redirect URL', async () => {
+    const signInWithOAuth = vi.fn().mockResolvedValue({ data: { provider: 'google', url: 'https://accounts.google.com' }, error: null });
+    const repo = new SupabaseAuthRepository({
+      auth: { signInWithOAuth },
+    } as unknown as SupabaseClient);
+
+    await repo.signInWithGoogle();
+
+    expect(signInWithOAuth).toHaveBeenCalledWith({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}/login` },
+    });
+  });
+
+  it('maps OAuth error to a Japanese error message', async () => {
+    const signInWithOAuth = vi.fn().mockResolvedValue({
+      data: { provider: 'google', url: null },
+      error: { message: 'Unsupported provider: provider is not enabled' },
+    });
+    const repo = new SupabaseAuthRepository({
+      auth: { signInWithOAuth },
+    } as unknown as SupabaseClient);
+
+    await expect(repo.signInWithGoogle()).rejects.toThrow('有効になっていません');
+  });
+
+  it('subscribes to onAuthStateChange and unsubscribes cleanly', () => {
+    const unsubscribe = vi.fn();
+    let capturedHandler: ((event: string, session: { user: typeof fakeUser } | null) => void) | undefined;
+    const onAuthStateChange = vi.fn((handler) => {
+      capturedHandler = handler;
+      return { data: { subscription: { unsubscribe } } };
+    });
+    const repo = new SupabaseAuthRepository({
+      auth: { onAuthStateChange },
+    } as unknown as SupabaseClient);
+
+    const listener = vi.fn();
+    const unsub = repo.onAuthStateChange(listener);
+
+    capturedHandler?.('SIGNED_IN', { user: fakeUser });
+    expect(listener).toHaveBeenCalledWith({
+      id: 'u1',
+      email: 'a@example.com',
+      createdAt: '2026-01-01T00:00:00Z',
+    });
+
+    capturedHandler?.('SIGNED_OUT', null);
+    expect(listener).toHaveBeenCalledWith(null);
+
+    unsub();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('consumeAuthRedirectError', () => {
+  beforeEach(() => {
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('returns null when no auth error params are present', () => {
+    window.history.replaceState(null, '', '/login');
+    expect(consumeAuthRedirectError()).toBeNull();
+  });
+
+  it('extracts OAuth query error, maps it to Japanese, and cleans URL params', () => {
+    window.history.replaceState(
+      null,
+      '',
+      '/login?error=access_denied&error_description=User+denied+access&keep=1',
+    );
+    expect(consumeAuthRedirectError()).toBe('Googleログインがキャンセルされました。');
+    expect(window.location.pathname).toBe('/login');
+    expect(window.location.search).toBe('?keep=1');
+  });
+
+  it('extracts OAuth hash error and cleans hash params', () => {
+    window.history.replaceState(
+      null,
+      '',
+      '/login#error=server_error&error_code=bad_oauth_state&error_description=Invalid+state',
+    );
+    expect(consumeAuthRedirectError()).toBe(
+      '認証のコールバック処理に失敗しました。もう一度お試しください。',
+    );
+    expect(window.location.hash).toBe('');
   });
 });
 
