@@ -30,6 +30,13 @@ export interface User {
   createdAt: string;
 }
 
+export interface PasskeyCredential {
+  id: string;
+  friendlyName: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
 export type QuizMode = 'one_by_one' | 'test';
 
 export interface QuizSettings {

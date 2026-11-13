@@ -2,22 +2,25 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   BookOpen,
+  KeyRound,
   LogOut,
   Play,
   Plus,
   Trash2,
 } from 'lucide-react';
 import { CsvUploadModal } from '../components/CsvUploadModal';
+import { PasskeySettingsModal } from '../components/PasskeySettingsModal';
 import { useApp } from '../context/AppContext';
 import type { ParsedQuestion, Quiz } from '../domain/types';
 
 export function DashboardPage() {
-  const { user, quizRepository, signOut } = useApp();
+  const { user, authRepository, quizRepository, signOut } = useApp();
   const navigate = useNavigate();
 
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [loading, setLoading] = useState(true);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isPasskeyOpen, setIsPasskeyOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const loadQuizzes = useCallback(async () => {
@@ -61,10 +64,18 @@ export function DashboardPage() {
             <BookOpen className="w-6 h-6 text-indigo-600 shrink-0" />
             <span className="font-bold text-slate-900 truncate">CSV Quiz Studio</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <span className="hidden sm:inline text-xs text-slate-500 truncate max-w-[200px]">
               {user?.email}
             </span>
+            <button
+              type="button"
+              onClick={() => setIsPasskeyOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
+              <span>パスキー設定</span>
+            </button>
             <button
               type="button"
               onClick={handleSignOut}
@@ -184,6 +195,11 @@ export function DashboardPage() {
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
         onSave={handleUploadSave}
+      />
+      <PasskeySettingsModal
+        isOpen={isPasskeyOpen}
+        onClose={() => setIsPasskeyOpen(false)}
+        authRepository={authRepository}
       />
     </div>
   );

@@ -1,4 +1,4 @@
-import type { ParsedQuestion, Quiz, User } from '../domain/types';
+import type { ParsedQuestion, PasskeyCredential, Quiz, User } from '../domain/types';
 
 export interface CreateQuizInput {
   title: string;
@@ -12,6 +12,12 @@ export interface AuthRepository {
   signInWithGoogle(): Promise<void>;
   signOut(): Promise<void>;
   onAuthStateChange?(callback: (user: User | null) => void): () => void;
+  isPasskeySupported?(): boolean;
+  signInWithPasskey?(): Promise<User>;
+  registerPasskey?(friendlyName?: string): Promise<PasskeyCredential>;
+  listPasskeys?(): Promise<PasskeyCredential[]>;
+  updatePasskeyName?(passkeyId: string, friendlyName: string): Promise<PasskeyCredential>;
+  deletePasskey?(passkeyId: string): Promise<void>;
 }
 
 export interface QuizRepository {

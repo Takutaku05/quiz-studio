@@ -15,3 +15,9 @@ DB スキーマは `supabase/migrations/` にあります（`quizzes` / `questio
 1. Google Cloud Console で OAuth 2.0 クライアント ID（ウェブアプリケーション）を作成し、承認済みリダイレクト URI に `https://<project-ref>.supabase.co/auth/v1/callback` を設定します。
 2. Supabase Dashboard の `Authentication -> Providers -> Google` を有効化し、Client ID / Client Secret を入力します。
 3. Supabase Dashboard の `Authentication -> URL Configuration -> Redirect URLs` に `https://csv-quiz-studio.takutakus.com/**`（ローカル確認時は `http://localhost:5173/**` も）を追加します。
+
+### パスキー（WebAuthn）設定
+
+1. Supabase Dashboard の `Authentication -> Passkeys` を有効化します。
+2. WebAuthn Relying Party を設定します（本番: Display Name `CSV Quiz Studio` / Relying Party ID `csv-quiz-studio.takutakus.com` / Origins `https://csv-quiz-studio.takutakus.com`）。
+3. メールアドレスまたは Google で一度ログインし、ダッシュボード右上の「パスキー設定」からパスキーを登録すると、次回以降 `/login` の「パスキーでログイン」が利用できます。

@@ -1,10 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   consumeAuthRedirectError,
   SupabaseAuthRepository,
   SupabaseQuizRepository,
   toAuthErrorMessage,
+  toPasskeyErrorMessage,
 } from './supabaseRepositories';
 
 const fakeUser = { id: 'u1', email: 'a@example.com', created_at: '2026-01-01T00:00:00Z', identities: [{}] };
@@ -181,5 +182,175 @@ describe('SupabaseQuizRepository.getById', () => {
     };
     const client = { from: () => builder } as unknown as SupabaseClient;
     await expect(new SupabaseQuizRepository(client).getById('bad', 'u1')).resolves.toBeNull();
+  });
+});
+
+describe('toPasskeyErrorMessage', () => {
+  it('maps WebAuthn and Supabase passkey errors to Japanese', () => {
+    expect(
+      toPasskeyErrorMessage({
+        code: 'ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY',
+        cause: { name: 'NotAllowedError' },
+        message: 'The operation either timed out or was not allowed.',
+      }),
+    ).toBe('パスキーの操作がキャンセルされたか、タイムアウトしました。');
+
+    expect(
+      toPasskeyErrorMessage({
+        code: 'ERROR_AUTHENTICATOR_PREVIOUSLY_REGISTERED',
+        message: 'The authenticator was previously registered',
+      }),
+    ).toBe('この認証器のパスキーは既に登録されています。');
+
+    expect(
+      toPasskeyErrorMessage({
+        code: 'webauthn_challenge_expired',
+        message: 'Challenge expired',
+      }),
+    ).toBe('パスキー認証の有効期限が切れました。もう一度お試しください。');
+
+    expect(
+      toPasskeyErrorMessage({
+        code: 'ERROR_INVALID_RP_ID',
+        message: 'The RP ID is invalid',
+      }),
+    ).toContain('Relying Party');
+  });
+});
+
+describe('SupabaseAuthRepository passkey methods', () => {
+  const originalPublicKeyCredential = window.PublicKeyCredential;
+  const originalCredentials = navigator.credentials;
+
+  function enableMockWebAuthn() {
+    Object.defineProperty(window, 'PublicKeyCredential', {
+      configurable: true,
+      value: function MockPublicKeyCredential() {},
+    });
+    Object.defineProperty(navigator, 'credentials', {
+      configurable: true,
+      value: { get: vi.fn(), create: vi.fn() },
+    });
+  }
+
+  afterEach(() => {
+    Object.defineProperty(window, 'PublicKeyCredential', {
+      configurable: true,
+      value: originalPublicKeyCredential,
+    });
+    Object.defineProperty(navigator, 'credentials', {
+      configurable: true,
+      value: originalCredentials,
+    });
+  });
+
+  it('rejects signInWithPasskey when browser does not support WebAuthn', async () => {
+    Object.defineProperty(window, 'PublicKeyCredential', {
+      configurable: true,
+      value: undefined,
+    });
+    const repo = new SupabaseAuthRepository({ auth: {} } as unknown as SupabaseClient);
+    expect(repo.isPasskeySupported()).toBe(false);
+    await expect(repo.signInWithPasskey()).rejects.toThrow('対応していません');
+  });
+
+  it('signs in with passkey and returns mapped User', async () => {
+    enableMockWebAuthn();
+    const signInWithPasskey = vi.fn().mockResolvedValue({
+      data: { user: fakeUser, session: { access_token: 'tok' } },
+      error: null,
+    });
+    const repo = new SupabaseAuthRepository({
+      auth: { signInWithPasskey },
+    } as unknown as SupabaseClient);
+
+    expect(repo.isPasskeySupported()).toBe(true);
+    await expect(repo.signInWithPasskey()).resolves.toEqual({
+      id: 'u1',
+      email: 'a@example.com',
+      createdAt: '2026-01-01T00:00:00Z',
+    });
+  });
+
+  it('registers a passkey and optionally updates its friendly name', async () => {
+    enableMockWebAuthn();
+    const registerPasskey = vi.fn().mockResolvedValue({
+      data: { id: 'pk-1', created_at: '2026-11-13T00:00:00Z' },
+      error: null,
+    });
+    const update = vi.fn().mockResolvedValue({
+      data: { id: 'pk-1', friendly_name: 'MacBook Touch ID', created_at: '2026-11-13T00:00:00Z' },
+      error: null,
+    });
+    const repo = new SupabaseAuthRepository({
+      auth: { registerPasskey, passkey: { update } },
+    } as unknown as SupabaseClient);
+
+    const created = await repo.registerPasskey('  MacBook Touch ID  ');
+    expect(registerPasskey).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({ passkeyId: 'pk-1', friendlyName: 'MacBook Touch ID' });
+    expect(created).toEqual({
+      id: 'pk-1',
+      friendlyName: 'MacBook Touch ID',
+      createdAt: '2026-11-13T00:00:00Z',
+      lastUsedAt: null,
+    });
+  });
+
+  it('validates friendly name length before registering passkey', async () => {
+    enableMockWebAuthn();
+    const registerPasskey = vi.fn();
+    const repo = new SupabaseAuthRepository({
+      auth: { registerPasskey },
+    } as unknown as SupabaseClient);
+
+    await expect(repo.registerPasskey('a'.repeat(121))).rejects.toThrow('120文字以内');
+    expect(registerPasskey).not.toHaveBeenCalled();
+  });
+
+  it('lists, updates, and deletes passkeys', async () => {
+    const list = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: 'pk-1',
+          friendly_name: 'iPhone',
+          created_at: '2026-11-10T00:00:00Z',
+          last_used_at: '2026-11-12T00:00:00Z',
+        },
+      ],
+      error: null,
+    });
+    const update = vi.fn().mockResolvedValue({
+      data: {
+        id: 'pk-1',
+        friendly_name: 'iPhone 16',
+        created_at: '2026-11-10T00:00:00Z',
+        last_used_at: '2026-11-12T00:00:00Z',
+      },
+      error: null,
+    });
+    const del = vi.fn().mockResolvedValue({ data: null, error: null });
+
+    const repo = new SupabaseAuthRepository({
+      auth: { passkey: { list, update, delete: del } },
+    } as unknown as SupabaseClient);
+
+    await expect(repo.listPasskeys()).resolves.toEqual([
+      {
+        id: 'pk-1',
+        friendlyName: 'iPhone',
+        createdAt: '2026-11-10T00:00:00Z',
+        lastUsedAt: '2026-11-12T00:00:00Z',
+      },
+    ]);
+
+    await expect(repo.updatePasskeyName('pk-1', '   ')).rejects.toThrow('パスキー名を入力');
+    await expect(repo.updatePasskeyName('pk-1', 'iPhone 16')).resolves.toMatchObject({
+      id: 'pk-1',
+      friendlyName: 'iPhone 16',
+    });
+
+    await repo.deletePasskey('pk-1');
+    expect(del).toHaveBeenCalledWith({ passkeyId: 'pk-1' });
   });
 });

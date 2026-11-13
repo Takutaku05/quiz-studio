@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpenCheck } from 'lucide-react';
+import { BookOpenCheck, KeyRound } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 function GoogleIcon() {
@@ -27,22 +27,26 @@ function GoogleIcon() {
 }
 
 export function LoginPage() {
-  const { signIn, signUp, signInWithGoogle, authError, clearAuthError } = useApp();
+  const { signIn, signUp, signInWithGoogle, signInWithPasskey, authError, clearAuthError } =
+    useApp();
   const navigate = useNavigate();
 
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [pendingMethod, setPendingMethod] = useState<'password' | 'google' | 'passkey' | null>(
+    null,
+  );
 
+  const submitting = pendingMethod !== null;
   const displayError = error ?? authError;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
     clearAuthError();
-    setSubmitting(true);
+    setPendingMethod('password');
     try {
       if (mode === 'signin') {
         await signIn(email, password);
@@ -53,20 +57,34 @@ export function LoginPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : '認証に失敗しました。');
     } finally {
-      setSubmitting(false);
+      setPendingMethod(null);
     }
   };
 
   const handleGoogleSignIn = async () => {
     setError(null);
     clearAuthError();
-    setSubmitting(true);
+    setPendingMethod('google');
     try {
       await signInWithGoogle();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google認証に失敗しました。');
     } finally {
-      setSubmitting(false);
+      setPendingMethod(null);
+    }
+  };
+
+  const handlePasskeySignIn = async () => {
+    setError(null);
+    clearAuthError();
+    setPendingMethod('passkey');
+    try {
+      await signInWithPasskey();
+      navigate('/', { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'パスキー認証に失敗しました。');
+    } finally {
+      setPendingMethod(null);
     }
   };
 
@@ -139,7 +157,7 @@ export function LoginPage() {
             disabled={submitting}
             className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-semibold py-3 transition-colors cursor-pointer"
           >
-            {submitting
+            {pendingMethod === 'password'
               ? '処理中...'
               : mode === 'signin'
                 ? 'ログイン'
@@ -156,15 +174,38 @@ export function LoginPage() {
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={handleGoogleSignIn}
-          disabled={submitting}
-          className="w-full inline-flex items-center justify-center gap-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-700 font-medium py-2.5 px-4 transition-colors cursor-pointer"
-        >
-          <GoogleIcon />
-          <span>Googleでログイン</span>
-        </button>
+        <div className="space-y-2.5">
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={submitting}
+            className="w-full inline-flex items-center justify-center gap-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-700 font-medium py-2.5 px-4 transition-colors cursor-pointer"
+          >
+            <GoogleIcon />
+            <span>
+              {pendingMethod === 'google' ? 'Googleへリダイレクト中...' : 'Googleでログイン'}
+            </span>
+          </button>
+
+          {mode === 'signin' && (
+            <>
+              <button
+                type="button"
+                onClick={handlePasskeySignIn}
+                disabled={submitting}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-700 font-medium py-2.5 px-4 transition-colors cursor-pointer"
+              >
+                <KeyRound className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>
+                  {pendingMethod === 'passkey' ? 'パスキーを確認中...' : 'パスキーでログイン'}
+                </span>
+              </button>
+              <p className="text-[11px] text-slate-400 text-center">
+                ※ パスキーはログイン後にダッシュボードの「パスキー設定」から登録できます
+              </p>
+            </>
+          )}
+        </div>
 
         <div className="mt-6 pt-5 border-t border-slate-100 text-center">
           {mode === 'signin' ? (

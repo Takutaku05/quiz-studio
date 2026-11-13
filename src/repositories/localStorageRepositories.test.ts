@@ -59,6 +59,25 @@ describe('Bolt 03: localStorageRepositories', () => {
       await authRepo.signIn('listener@example.com', 'secret123');
       expect(listener).toHaveBeenCalledTimes(2);
     });
+
+    it('reports passkey methods as unavailable in localStorage mode', async () => {
+      expect(authRepo.isPasskeySupported()).toBe(false);
+      await expect(authRepo.signInWithPasskey()).rejects.toThrow(
+        'パスキー認証はSupabase連携時のみ利用できます。',
+      );
+      await expect(authRepo.registerPasskey()).rejects.toThrow(
+        'パスキー認証はSupabase連携時のみ利用できます。',
+      );
+      await expect(authRepo.listPasskeys()).rejects.toThrow(
+        'パスキー認証はSupabase連携時のみ利用できます。',
+      );
+      await expect(authRepo.updatePasskeyName('id', 'name')).rejects.toThrow(
+        'パスキー認証はSupabase連携時のみ利用できます。',
+      );
+      await expect(authRepo.deletePasskey('id')).rejects.toThrow(
+        'パスキー認証はSupabase連携時のみ利用できます。',
+      );
+    });
   });
 
   describe('LocalQuizRepository & User Isolation', () => {

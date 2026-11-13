@@ -38,6 +38,7 @@ interface AppContextValue {
   signIn: (email: string, password: string) => Promise<User>;
   signUp: (email: string, password: string) => Promise<User>;
   signInWithGoogle: () => Promise<void>;
+  signInWithPasskey: () => Promise<User>;
   signOut: () => Promise<void>;
 }
 
@@ -128,6 +129,16 @@ export function AppProvider({
     await authRepository.signInWithGoogle();
   }, [authRepository]);
 
+  const signInWithPasskey = useCallback(async () => {
+    setAuthError(null);
+    if (!authRepository.signInWithPasskey) {
+      throw new Error('パスキー認証はこの認証設定では利用できません。');
+    }
+    const signedIn = await authRepository.signInWithPasskey();
+    setUser(signedIn);
+    return signedIn;
+  }, [authRepository]);
+
   const signOut = useCallback(async () => {
     setAuthError(null);
     await authRepository.signOut();
@@ -145,6 +156,7 @@ export function AppProvider({
       signIn,
       signUp,
       signInWithGoogle,
+      signInWithPasskey,
       signOut,
     }),
     [
@@ -157,6 +169,7 @@ export function AppProvider({
       signIn,
       signUp,
       signInWithGoogle,
+      signInWithPasskey,
       signOut,
     ],
   );
