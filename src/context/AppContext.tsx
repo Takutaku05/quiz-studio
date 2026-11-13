@@ -12,7 +12,20 @@ import {
   LocalAuthRepository,
   LocalQuizRepository,
 } from '../repositories/localStorageRepositories';
+import {
+  SupabaseAuthRepository,
+  SupabaseQuizRepository,
+} from '../repositories/supabaseRepositories';
 import type { AuthRepository, QuizRepository } from '../repositories/types';
+import { supabase } from '../lib/supabaseClient';
+
+function createDefaultAuthRepository(): AuthRepository {
+  return supabase ? new SupabaseAuthRepository(supabase) : new LocalAuthRepository();
+}
+
+function createDefaultQuizRepository(): QuizRepository {
+  return supabase ? new SupabaseQuizRepository(supabase) : new LocalQuizRepository();
+}
 
 interface AppContextValue {
   user: User | null;
@@ -38,11 +51,11 @@ export function AppProvider({
   quizRepository: customQuizRepo,
 }: AppProviderProps) {
   const authRepository = useMemo(
-    () => customAuthRepo ?? new LocalAuthRepository(),
+    () => customAuthRepo ?? createDefaultAuthRepository(),
     [customAuthRepo],
   );
   const quizRepository = useMemo(
-    () => customQuizRepo ?? new LocalQuizRepository(),
+    () => customQuizRepo ?? createDefaultQuizRepository(),
     [customQuizRepo],
   );
 
