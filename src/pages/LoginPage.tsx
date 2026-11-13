@@ -3,8 +3,31 @@ import { useNavigate } from 'react-router-dom';
 import { BookOpenCheck } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
+function GoogleIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="#4285F4"
+        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
+      />
+    </svg>
+  );
+}
+
 export function LoginPage() {
-  const { signIn, signUp } = useApp();
+  const { signIn, signUp, signInWithGoogle, authError, clearAuthError } = useApp();
   const navigate = useNavigate();
 
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
@@ -13,9 +36,12 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const displayError = error ?? authError;
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    clearAuthError();
     setSubmitting(true);
     try {
       if (mode === 'signin') {
@@ -26,6 +52,19 @@ export function LoginPage() {
       navigate('/', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : '認証に失敗しました。');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setError(null);
+    clearAuthError();
+    setSubmitting(true);
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google認証に失敗しました。');
     } finally {
       setSubmitting(false);
     }
@@ -86,12 +125,12 @@ export function LoginPage() {
             />
           </div>
 
-          {error && (
+          {displayError && (
             <div
               role="alert"
               className="rounded-xl bg-rose-50 border border-rose-200 px-3.5 py-2.5 text-sm text-rose-700"
             >
-              {error}
+              {displayError}
             </div>
           )}
 
@@ -108,6 +147,25 @@ export function LoginPage() {
           </button>
         </form>
 
+        <div className="relative my-5">
+          <div className="absolute inset-0 flex items-center" aria-hidden="true">
+            <div className="w-full border-t border-slate-200" />
+          </div>
+          <div className="relative flex justify-center text-xs">
+            <span className="bg-white px-3 text-slate-400">または</span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleGoogleSignIn}
+          disabled={submitting}
+          className="w-full inline-flex items-center justify-center gap-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-700 font-medium py-2.5 px-4 transition-colors cursor-pointer"
+        >
+          <GoogleIcon />
+          <span>Googleでログイン</span>
+        </button>
+
         <div className="mt-6 pt-5 border-t border-slate-100 text-center">
           {mode === 'signin' ? (
             <button
@@ -115,6 +173,7 @@ export function LoginPage() {
               onClick={() => {
                 setMode('signup');
                 setError(null);
+                clearAuthError();
               }}
               className="text-sm font-medium text-indigo-600 hover:text-indigo-700 cursor-pointer"
             >
@@ -126,6 +185,7 @@ export function LoginPage() {
               onClick={() => {
                 setMode('signin');
                 setError(null);
+                clearAuthError();
               }}
               className="text-sm font-medium text-indigo-600 hover:text-indigo-700 cursor-pointer"
             >

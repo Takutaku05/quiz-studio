@@ -15,6 +15,7 @@ import {
 import {
   SupabaseAuthRepository,
   SupabaseQuizRepository,
+  consumeAuthRedirectError,
 } from '../repositories/supabaseRepositories';
 import type { AuthRepository, QuizRepository } from '../repositories/types';
 import { supabase } from '../lib/supabaseClient';
@@ -30,10 +31,13 @@ function createDefaultQuizRepository(): QuizRepository {
 interface AppContextValue {
   user: User | null;
   authLoading: boolean;
+  authError: string | null;
+  clearAuthError: () => void;
   authRepository: AuthRepository;
   quizRepository: QuizRepository;
   signIn: (email: string, password: string) => Promise<User>;
   signUp: (email: string, password: string) => Promise<User>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -61,30 +65,47 @@ export function AppProvider({
 
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(() => consumeAuthRedirectError());
 
   useEffect(() => {
     let active = true;
+    let resolvedByListener = false;
+
+    const unsubscribe = authRepository.onAuthStateChange?.((nextUser) => {
+      if (!active) return;
+      resolvedByListener = true;
+      setUser(nextUser);
+      setAuthLoading(false);
+    });
+
     authRepository
       .getCurrentUser()
       .then((currentUser) => {
-        if (active) {
+        if (active && !resolvedByListener) {
           setUser(currentUser);
           setAuthLoading(false);
         }
       })
       .catch(() => {
-        if (active) {
+        if (active && !resolvedByListener) {
           setUser(null);
           setAuthLoading(false);
         }
       });
+
     return () => {
       active = false;
+      unsubscribe?.();
     };
   }, [authRepository]);
 
+  const clearAuthError = useCallback(() => {
+    setAuthError(null);
+  }, []);
+
   const signIn = useCallback(
     async (email: string, password: string) => {
+      setAuthError(null);
       const signedIn = await authRepository.signIn(email, password);
       setUser(signedIn);
       return signedIn;
@@ -94,6 +115,7 @@ export function AppProvider({
 
   const signUp = useCallback(
     async (email: string, password: string) => {
+      setAuthError(null);
       const created = await authRepository.signUp(email, password);
       setUser(created);
       return created;
@@ -101,7 +123,13 @@ export function AppProvider({
     [authRepository],
   );
 
+  const signInWithGoogle = useCallback(async () => {
+    setAuthError(null);
+    await authRepository.signInWithGoogle();
+  }, [authRepository]);
+
   const signOut = useCallback(async () => {
+    setAuthError(null);
     await authRepository.signOut();
     setUser(null);
   }, [authRepository]);
@@ -110,13 +138,27 @@ export function AppProvider({
     () => ({
       user,
       authLoading,
+      authError,
+      clearAuthError,
       authRepository,
       quizRepository,
       signIn,
       signUp,
+      signInWithGoogle,
       signOut,
     }),
-    [user, authLoading, authRepository, quizRepository, signIn, signUp, signOut],
+    [
+      user,
+      authLoading,
+      authError,
+      clearAuthError,
+      authRepository,
+      quizRepository,
+      signIn,
+      signUp,
+      signInWithGoogle,
+      signOut,
+    ],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

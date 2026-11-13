@@ -60,6 +60,19 @@ function toQuiz(row: QuizRow): Quiz {
 /** Map Supabase Auth error messages to the Japanese messages the UI shows. */
 export function toAuthErrorMessage(message: string): string {
   const m = message.toLowerCase();
+  if (m.includes('access_denied') || m.includes('user denied')) {
+    return 'Googleログインがキャンセルされました。';
+  }
+  if (
+    m.includes('provider is not enabled') ||
+    m.includes('provider_disabled') ||
+    m.includes('oauth_provider_not_supported')
+  ) {
+    return 'Googleログインは現在有効になっていません。Supabaseダッシュボードの設定を確認してください。';
+  }
+  if (m.includes('bad_oauth_state') || m.includes('bad_oauth_callback')) {
+    return '認証のコールバック処理に失敗しました。もう一度お試しください。';
+  }
   if (m.includes('invalid login credentials')) {
     return 'メールアドレスまたはパスワードが正しくありません。';
   }
@@ -79,6 +92,45 @@ export function toAuthErrorMessage(message: string): string {
     return '試行回数が多すぎます。しばらく待ってから再度お試しください。';
   }
   return message;
+}
+
+/**
+ * Extract OAuth redirect error parameters from the current URL (query or hash),
+ * clean them from browser history, and return a localized Japanese error message.
+ */
+export function consumeAuthRedirectError(): string | null {
+  if (typeof window === 'undefined') return null;
+
+  const url = new URL(window.location.href);
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
+  const error = url.searchParams.get('error') ?? hashParams.get('error');
+  const errorCode = url.searchParams.get('error_code') ?? hashParams.get('error_code');
+  const errorDescription =
+    url.searchParams.get('error_description') ?? hashParams.get('error_description');
+
+  if (!error && !errorCode && !errorDescription) {
+    return null;
+  }
+
+  const hasHashError =
+    hashParams.has('error') ||
+    hashParams.has('error_code') ||
+    hashParams.has('error_description');
+  for (const key of ['error', 'error_code', 'error_description']) {
+    url.searchParams.delete(key);
+    if (hasHashError) {
+      hashParams.delete(key);
+    }
+  }
+  if (hasHashError) {
+    const nextHash = hashParams.toString();
+    url.hash = nextHash ? `#${nextHash}` : '';
+  }
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+
+  const raw = [errorCode, error, errorDescription].filter(Boolean).join(' ');
+  const mapped = toAuthErrorMessage(raw);
+  return mapped === raw ? (errorDescription ?? errorCode ?? error) : mapped;
 }
 
 export class SupabaseAuthRepository implements AuthRepository {
@@ -131,9 +183,31 @@ export class SupabaseAuthRepository implements AuthRepository {
     return toUser(data.user);
   }
 
+  async signInWithGoogle(): Promise<void> {
+    const { error } = await this.client.auth.signInWithOAuth({
+      provider: 'google',
+      options:
+        typeof window !== 'undefined'
+          ? { redirectTo: `${window.location.origin}/login` }
+          : undefined,
+    });
+    if (error) {
+      throw new Error(toAuthErrorMessage(error.message));
+    }
+  }
+
   async signOut(): Promise<void> {
     const { error } = await this.client.auth.signOut();
     if (error) throw new Error(error.message);
+  }
+
+  onAuthStateChange(callback: (user: User | null) => void): () => void {
+    const {
+      data: { subscription },
+    } = this.client.auth.onAuthStateChange((_event, session) => {
+      callback(session ? toUser(session.user) : null);
+    });
+    return () => subscription.unsubscribe();
   }
 }
 

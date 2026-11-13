@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LocalAuthRepository,
   LocalQuizRepository,
@@ -39,6 +39,25 @@ describe('Bolt 03: localStorageRepositories', () => {
       await authRepo.signOut();
       await expect(authRepo.signIn('a@example.com', 'wrongpass')).rejects.toThrow();
       await expect(authRepo.signIn('nobody@example.com', 'secret123')).rejects.toThrow();
+    });
+
+    it('rejects Google login in localStorage mode and notifies auth state listeners', async () => {
+      await expect(authRepo.signInWithGoogle()).rejects.toThrow(
+        'GoogleログインはSupabase連携時のみ利用できます。',
+      );
+
+      const listener = vi.fn();
+      const unsubscribe = authRepo.onAuthStateChange(listener);
+
+      const user = await authRepo.signUp('listener@example.com', 'secret123');
+      expect(listener).toHaveBeenLastCalledWith(user);
+
+      await authRepo.signOut();
+      expect(listener).toHaveBeenLastCalledWith(null);
+
+      unsubscribe();
+      await authRepo.signIn('listener@example.com', 'secret123');
+      expect(listener).toHaveBeenCalledTimes(2);
     });
   });
 
