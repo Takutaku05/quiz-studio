@@ -64,4 +64,27 @@ describe('Bolt 04: DashboardPage', () => {
     });
     expect(screen.getByText('新規クイズ')).toBeInTheDocument();
   });
+
+  it('opens PasskeySettingsModal from the dashboard header button', async () => {
+    const user = userEvent.setup();
+    const authRepo = new LocalAuthRepository();
+    const quizRepo = new LocalQuizRepository();
+    await authRepo.signUp('passkey-owner@example.com', 'password123');
+
+    render(
+      <AppProvider authRepository={authRepo} quizRepository={quizRepo}>
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/login" element={<div>Login Screen</div>} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: /パスキー設定/ }));
+    expect(
+      await screen.findByRole('heading', { name: 'パスキー設定' }),
+    ).toBeInTheDocument();
+  });
 });

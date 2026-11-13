@@ -1,5 +1,5 @@
 import type { SupabaseClient, User as SupabaseUser } from '@supabase/supabase-js';
-import type { AnswerNumber, Question, Quiz, User } from '../domain/types';
+import type { AnswerNumber, PasskeyCredential, Question, Quiz, User } from '../domain/types';
 import type { AuthRepository, CreateQuizInput, QuizRepository } from './types';
 
 interface QuestionRow {
@@ -28,6 +28,20 @@ const QUIZ_SELECT =
 
 function toUser(u: SupabaseUser): User {
   return { id: u.id, email: u.email ?? '', createdAt: u.created_at };
+}
+
+function toPasskeyCredential(item: {
+  id: string;
+  friendly_name?: string | null;
+  created_at: string;
+  last_used_at?: string | null;
+}): PasskeyCredential {
+  return {
+    id: item.id,
+    friendlyName: item.friendly_name ?? null,
+    createdAt: item.created_at,
+    lastUsedAt: item.last_used_at ?? null,
+  };
 }
 
 function toQuestion(row: QuestionRow): Question {
@@ -133,6 +147,80 @@ export function consumeAuthRedirectError(): string | null {
   return mapped === raw ? (errorDescription ?? errorCode ?? error) : mapped;
 }
 
+const MAX_PASSKEY_NAME_LENGTH = 120;
+
+function validatePasskeyFriendlyName(friendlyName: string, required: boolean): string {
+  const trimmed = friendlyName.trim();
+  if (required && !trimmed) {
+    throw new Error('パスキー名を入力してください。');
+  }
+  if (trimmed.length > MAX_PASSKEY_NAME_LENGTH) {
+    throw new Error(`パスキー名は${MAX_PASSKEY_NAME_LENGTH}文字以内で入力してください。`);
+  }
+  return trimmed;
+}
+
+/** Map WebAuthn and Supabase Passkey errors to user-friendly Japanese messages. */
+export function toPasskeyErrorMessage(error: unknown): string {
+  if (typeof error === 'string') {
+    return toPasskeyErrorMessage({ message: error });
+  }
+  if (!error || typeof error !== 'object') {
+    return 'パスキー認証に失敗しました。';
+  }
+
+  const errObj = error as {
+    code?: string;
+    name?: string;
+    message?: string;
+    cause?: { name?: string };
+  };
+  const code = (errObj.code ?? '').toLowerCase();
+  const name = (errObj.name ?? '').toLowerCase();
+  const causeName = (errObj.cause?.name ?? '').toLowerCase();
+  const msg = (errObj.message ?? '').toLowerCase();
+
+  if (
+    name === 'notallowederror' ||
+    causeName === 'notallowederror' ||
+    msg.includes('notallowederror') ||
+    msg.includes('timed out or was not allowed')
+  ) {
+    return 'パスキーの操作がキャンセルされたか、タイムアウトしました。';
+  }
+  if (code === 'error_ceremony_aborted') {
+    return 'パスキーの処理が中断されました。もう一度お試しください。';
+  }
+  if (code === 'error_authenticator_previously_registered') {
+    return 'この認証器のパスキーは既に登録されています。';
+  }
+  if (code === 'error_invalid_domain' || code === 'error_invalid_rp_id') {
+    return 'このドメインではパスキーを使用できません（Relying Party設定を確認してください）。';
+  }
+  if (
+    code === 'error_authenticator_missing_discoverable_credential_support' ||
+    code === 'error_authenticator_missing_user_verification_support'
+  ) {
+    return 'ご利用の認証器はパスキーの要件（生体認証・PIN等）に対応していません。';
+  }
+  if (code === 'webauthn_challenge_expired' || msg.includes('challenge_expired')) {
+    return 'パスキー認証の有効期限が切れました。もう一度お試しください。';
+  }
+  if (msg.includes('browser does not support webauthn')) {
+    return 'このブラウザはパスキー（WebAuthn）に対応していません。';
+  }
+  if (
+    code === 'provider_disabled' ||
+    (msg.includes('passkey') && (msg.includes('disabled') || msg.includes('not enabled') || msg.includes('not supported')))
+  ) {
+    return 'パスキー認証が有効になっていません。SupabaseダッシュボードのPasskeys設定を確認してください。';
+  }
+  if (code === 'invalid_credentials' || msg.includes('invalid login credentials') || msg.includes('passkey not found')) {
+    return '登録済みのパスキーが見つからないか、認証に失敗しました。';
+  }
+  return errObj.message ? toAuthErrorMessage(errObj.message) : 'パスキー認証に失敗しました。';
+}
+
 export class SupabaseAuthRepository implements AuthRepository {
   constructor(private readonly client: SupabaseClient) {}
 
@@ -208,6 +296,78 @@ export class SupabaseAuthRepository implements AuthRepository {
       callback(session ? toUser(session.user) : null);
     });
     return () => subscription.unsubscribe();
+  }
+
+  isPasskeySupported(): boolean {
+    return (
+      typeof window !== 'undefined' &&
+      typeof window.PublicKeyCredential !== 'undefined' &&
+      typeof navigator !== 'undefined' &&
+      Boolean(navigator.credentials)
+    );
+  }
+
+  private assertPasskeySupported(): void {
+    if (!this.isPasskeySupported()) {
+      throw new Error('このブラウザはパスキー（WebAuthn）に対応していません。');
+    }
+  }
+
+  async signInWithPasskey(): Promise<User> {
+    this.assertPasskeySupported();
+    const { data, error } = await this.client.auth.signInWithPasskey();
+    if (error || !data?.user || !data?.session) {
+      throw new Error(toPasskeyErrorMessage(error ?? '登録済みのパスキーが見つからないか、認証に失敗しました。'));
+    }
+    return toUser(data.user);
+  }
+
+  async registerPasskey(friendlyName?: string): Promise<PasskeyCredential> {
+    this.assertPasskeySupported();
+    const trimmedName = friendlyName ? validatePasskeyFriendlyName(friendlyName, false) : '';
+
+    const { data, error } = await this.client.auth.registerPasskey();
+    if (error || !data) {
+      throw new Error(toPasskeyErrorMessage(error ?? 'パスキーの登録に失敗しました。'));
+    }
+
+    if (trimmedName) {
+      const { data: updated, error: updateError } = await this.client.auth.passkey.update({
+        passkeyId: data.id,
+        friendlyName: trimmedName,
+      });
+      if (!updateError && updated) {
+        return toPasskeyCredential(updated);
+      }
+    }
+    return toPasskeyCredential(data);
+  }
+
+  async listPasskeys(): Promise<PasskeyCredential[]> {
+    const { data, error } = await this.client.auth.passkey.list();
+    if (error) {
+      throw new Error(toPasskeyErrorMessage(error));
+    }
+    return (data ?? []).map(toPasskeyCredential);
+  }
+
+  async updatePasskeyName(passkeyId: string, friendlyName: string): Promise<PasskeyCredential> {
+    const trimmedName = validatePasskeyFriendlyName(friendlyName, true);
+    const { data, error } = await this.client.auth.passkey.update({
+      passkeyId,
+      friendlyName: trimmedName,
+    });
+    if (error || !data) {
+      throw new Error(toPasskeyErrorMessage(error ?? 'パスキー名の更新に失敗しました。'));
+    }
+    return toPasskeyCredential(data);
+  }
+
+  async deletePasskey(passkeyId: string): Promise<void> {
+    const { error } = await this.client.auth.passkey.delete({ passkeyId });
+    if (error) {
+      throw new Error(toPasskeyErrorMessage(error));
+    }
   }
 }
 

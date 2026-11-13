@@ -90,4 +90,60 @@ describe('Bolt 04 & 06: LoginPage', () => {
     ).toBeInTheDocument();
     expect(window.location.search).toBe('');
   });
+
+  it('signs in with passkey in signin mode and hides passkey button in signup mode', async () => {
+    const user = userEvent.setup();
+    const baseRepo = new LocalAuthRepository();
+    const mockAuthRepo: AuthRepository = {
+      getCurrentUser: () => baseRepo.getCurrentUser(),
+      signUp: (e, p) => baseRepo.signUp(e, p),
+      signIn: (e, p) => baseRepo.signIn(e, p),
+      signInWithGoogle: () => baseRepo.signInWithGoogle(),
+      signOut: () => baseRepo.signOut(),
+      isPasskeySupported: () => true,
+      signInWithPasskey: vi.fn().mockResolvedValue({
+        id: 'pk-user-1',
+        email: 'passkey@example.com',
+        createdAt: '2026-11-13T00:00:00Z',
+      }),
+    };
+
+    renderLogin(['/login'], mockAuthRepo);
+
+    const passkeyButton = await screen.findByRole('button', { name: /パスキーでログイン/ });
+    await user.click(screen.getByRole('button', { name: '新規登録はこちら' }));
+    expect(screen.queryByRole('button', { name: /パスキーでログイン/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /すでにアカウントをお持ちの方/ }));
+    await user.click(await screen.findByRole('button', { name: /パスキーでログイン/ }));
+
+    expect(mockAuthRepo.signInWithPasskey).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.getByText('Dashboard Home')).toBeInTheDocument();
+    });
+    expect(passkeyButton).toBeDefined();
+  });
+
+  it('displays error message when passkey login fails', async () => {
+    const user = userEvent.setup();
+    const baseRepo = new LocalAuthRepository();
+    const mockAuthRepo: AuthRepository = {
+      getCurrentUser: () => baseRepo.getCurrentUser(),
+      signUp: (e, p) => baseRepo.signUp(e, p),
+      signIn: (e, p) => baseRepo.signIn(e, p),
+      signInWithGoogle: () => baseRepo.signInWithGoogle(),
+      signOut: () => baseRepo.signOut(),
+      isPasskeySupported: () => true,
+      signInWithPasskey: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('パスキーの操作がキャンセルされたか、タイムアウトしました。')),
+    };
+
+    renderLogin(['/login'], mockAuthRepo);
+
+    await user.click(await screen.findByRole('button', { name: /パスキーでログイン/ }));
+    expect(
+      await screen.findByText('パスキーの操作がキャンセルされたか、タイムアウトしました。'),
+    ).toBeInTheDocument();
+  });
 });

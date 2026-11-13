@@ -1,4 +1,4 @@
-import type { Question, Quiz, User } from '../domain/types';
+import type { PasskeyCredential, Question, Quiz, User } from '../domain/types';
 import type { AuthRepository, CreateQuizInput, QuizRepository } from './types';
 
 const STORAGE_KEYS = {
@@ -114,6 +114,30 @@ export class LocalAuthRepository implements AuthRepository {
     return () => {
       this.listeners.delete(callback);
     };
+  }
+
+  isPasskeySupported(): boolean {
+    return false;
+  }
+
+  async signInWithPasskey(): Promise<User> {
+    throw new Error('パスキー認証はSupabase連携時のみ利用できます。');
+  }
+
+  async registerPasskey(_friendlyName?: string): Promise<PasskeyCredential> {
+    throw new Error('パスキー認証はSupabase連携時のみ利用できます。');
+  }
+
+  async listPasskeys(): Promise<PasskeyCredential[]> {
+    throw new Error('パスキー認証はSupabase連携時のみ利用できます。');
+  }
+
+  async updatePasskeyName(_passkeyId: string, _friendlyName: string): Promise<PasskeyCredential> {
+    throw new Error('パスキー認証はSupabase連携時のみ利用できます。');
+  }
+
+  async deletePasskey(_passkeyId: string): Promise<void> {
+    throw new Error('パスキー認証はSupabase連携時のみ利用できます。');
   }
 }
 
