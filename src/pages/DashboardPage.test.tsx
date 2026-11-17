@@ -1,8 +1,11 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AppProvider } from '../context/AppContext';
+import * as csvTemplate from '../domain/csvTemplate';
+import { XLSX_MIME_TYPE } from '../domain/xlsxParser';
+import * as xlsxTemplate from '../domain/xlsxTemplate';
 import { LocalAuthRepository, LocalQuizRepository } from '../repositories/localStorageRepositories';
 import { DashboardPage } from './DashboardPage';
 
@@ -43,10 +46,10 @@ describe('Bolt 04: DashboardPage', () => {
     expect(screen.getByText('1問')).toBeInTheDocument();
 
     // Open upload modal and add a quiz
-    await user.click(screen.getByRole('button', { name: /新規CSVアップロード/ }));
+    await user.click(screen.getByRole('button', { name: /新規問題集アップロード/ }));
     const csv = 'question,choice1,choice2,choice3,choice4,answer,explanation\nQ,A,B,,,2,Bです';
     const file = new File([csv], '新規クイズ.csv', { type: 'text/csv' });
-    await user.upload(screen.getByLabelText('CSVファイルを選択'), file);
+    await user.upload(screen.getByLabelText('ファイルを選択'), file);
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '保存' })).toBeEnabled();
     });
@@ -63,6 +66,42 @@ describe('Bolt 04: DashboardPage', () => {
       expect(screen.queryByText('既存問題集')).not.toBeInTheDocument();
     });
     expect(screen.getByText('新規クイズ')).toBeInTheDocument();
+  });
+
+  it('uploads an .xlsx quiz created from the Excel template into the dashboard', async () => {
+    const user = userEvent.setup();
+    const authRepo = new LocalAuthRepository();
+    const quizRepo = new LocalQuizRepository();
+    await authRepo.signUp('excel-user@example.com', 'password123');
+
+    render(
+      <AppProvider authRepository={authRepo} quizRepository={quizRepo}>
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/login" element={<div>Login Screen</div>} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: /最初の問題集をアップロード/ }));
+
+    const templateBlob = await xlsxTemplate.buildXlsxTemplateBlob();
+    const xlsxFile = new File([templateBlob], 'スプレッドシート問題集.xlsx', {
+      type: XLSX_MIME_TYPE,
+    });
+    await user.upload(screen.getByLabelText('ファイルを選択'), xlsxFile);
+
+    await waitFor(() => {
+      expect(screen.getByText(/3問の問題を読み込みました/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '保存' })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(await screen.findByText('スプレッドシート問題集')).toBeInTheDocument();
+    expect(screen.getByText('3問')).toBeInTheDocument();
   });
 
   it('opens PasskeySettingsModal from the dashboard header button', async () => {
@@ -86,5 +125,53 @@ describe('Bolt 04: DashboardPage', () => {
     expect(
       await screen.findByRole('heading', { name: 'パスキー設定' }),
     ).toBeInTheDocument();
+  });
+
+  it('provides Excel and CSV template download buttons in empty state and header', async () => {
+    const user = userEvent.setup();
+    const authRepo = new LocalAuthRepository();
+    const quizRepo = new LocalQuizRepository();
+    await authRepo.signUp('starter@example.com', 'password123');
+    const downloadCsvSpy = vi
+      .spyOn(csvTemplate, 'downloadCsvTemplate')
+      .mockImplementation(() => {});
+    const downloadXlsxSpy = vi
+      .spyOn(xlsxTemplate, 'downloadXlsxTemplate')
+      .mockResolvedValue(undefined);
+
+    render(
+      <AppProvider authRepository={authRepo} quizRepository={quizRepo}>
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/login" element={<div>Login Screen</div>} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+
+    const emptyXlsxBtn = await screen.findByRole('button', {
+      name: 'テンプレートExcel（.xlsx）をダウンロード',
+    });
+    const headerXlsxBtn = screen.getByRole('button', {
+      name: 'テンプレートExcel',
+    });
+    const emptyCsvBtn = screen.getByRole('button', {
+      name: 'テンプレートCSVをダウンロード',
+    });
+    const headerCsvBtn = screen.getByRole('button', {
+      name: 'テンプレートCSV',
+    });
+
+    await user.click(emptyXlsxBtn);
+    await user.click(headerXlsxBtn);
+    expect(downloadXlsxSpy).toHaveBeenCalledTimes(2);
+
+    await user.click(emptyCsvBtn);
+    await user.click(headerCsvBtn);
+    expect(downloadCsvSpy).toHaveBeenCalledTimes(2);
+
+    downloadXlsxSpy.mockRestore();
+    downloadCsvSpy.mockRestore();
   });
 });

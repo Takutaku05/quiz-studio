@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   BookOpen,
+  Download,
+  FileSpreadsheet,
   KeyRound,
   LogOut,
   Play,
@@ -11,6 +13,8 @@ import {
 import { CsvUploadModal } from '../components/CsvUploadModal';
 import { PasskeySettingsModal } from '../components/PasskeySettingsModal';
 import { useApp } from '../context/AppContext';
+import { downloadCsvTemplate } from '../domain/csvTemplate';
+import { downloadXlsxTemplate } from '../domain/xlsxTemplate';
 import type { ParsedQuestion, Quiz } from '../domain/types';
 
 export function DashboardPage() {
@@ -22,6 +26,7 @@ export function DashboardPage() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isPasskeyOpen, setIsPasskeyOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [downloadingXlsx, setDownloadingXlsx] = useState(false);
 
   const loadQuizzes = useCallback(async () => {
     if (!user) return;
@@ -54,6 +59,18 @@ export function DashboardPage() {
   const handleSignOut = async () => {
     await signOut();
     navigate('/login', { replace: true });
+  };
+
+  const handleDownloadXlsxTemplate = async () => {
+    if (downloadingXlsx) return;
+    setDownloadingXlsx(true);
+    try {
+      await downloadXlsxTemplate();
+    } catch {
+      // Ignore unexpected blob/download errors in headless environments.
+    } finally {
+      setDownloadingXlsx(false);
+    }
   };
 
   return (
@@ -93,17 +110,38 @@ export function DashboardPage() {
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900">マイ問題集</h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              CSVをアップロードして反復学習を始めましょう
+              CSV や Excel（.xlsx）をアップロードして反復学習を始めましょう
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setIsUploadOpen(true)}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold shadow-sm transition-colors cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>新規CSVアップロード</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              disabled={downloadingXlsx}
+              onClick={() => {
+                void handleDownloadXlsxTemplate();
+              }}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white border border-indigo-200 hover:bg-indigo-50 text-indigo-700 text-sm font-medium transition-colors disabled:opacity-60 cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
+              <span>{downloadingXlsx ? 'Excel作成中...' : 'テンプレートExcel'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={downloadCsvTemplate}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-sm font-medium transition-colors cursor-pointer"
+            >
+              <Download className="w-4 h-4 text-indigo-600" />
+              <span>テンプレートCSV</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsUploadOpen(true)}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold shadow-sm transition-colors cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>新規問題集アップロード</span>
+            </button>
+          </div>
         </div>
 
         {loading ? (
@@ -113,16 +151,41 @@ export function DashboardPage() {
             <BookOpen className="w-10 h-10 text-slate-300 mx-auto mb-3" />
             <p className="text-slate-700 font-medium">まだ問題集がありません</p>
             <p className="text-sm text-slate-500 mt-1 mb-5">
-              「新規CSVアップロード」から問題集を登録してください。
+              テンプレート（Excel / CSV）をダウンロードして問題を作成し、「最初の問題集をアップロード」から登録してください。
             </p>
-            <button
-              type="button"
-              onClick={() => setIsUploadOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>最初のCSVをアップロード</span>
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                disabled={downloadingXlsx}
+                onClick={() => {
+                  void handleDownloadXlsxTemplate();
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-indigo-200 hover:bg-indigo-50 text-indigo-700 text-sm font-medium disabled:opacity-60 cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
+                <span>
+                  {downloadingXlsx
+                    ? 'Excel作成中...'
+                    : 'テンプレートExcel（.xlsx）をダウンロード'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={downloadCsvTemplate}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-medium cursor-pointer"
+              >
+                <Download className="w-4 h-4 text-indigo-600" />
+                <span>テンプレートCSVをダウンロード</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsUploadOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>最初の問題集をアップロード</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
