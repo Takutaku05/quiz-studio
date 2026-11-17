@@ -44,3 +44,26 @@ export interface QuizSettings {
   shuffleQuestions: boolean;
   shuffleChoices: boolean;
 }
+
+export interface QuizShare {
+  id: string;
+  quizId: string;
+  token: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SharedQuizSummary {
+  title: string;
+  questionCount: number;
+}
+
+export type ImportSharedQuizStatus = 'imported' | 'already_imported' | 'own_quiz';
+
+export interface ImportSharedQuizResult {
+  quizId: string;
+  title: string;
+  questionCount: number;
+  status: ImportSharedQuizStatus;
+}

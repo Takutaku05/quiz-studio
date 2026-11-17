@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
+import { resolvePostAuthRedirect } from './lib/shareRedirect';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { QuizPlayPage } from './pages/QuizPlayPage';
+import { ShareImportPage } from './pages/ShareImportPage';
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { user, authLoading } = useApp();
@@ -22,6 +24,7 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 
 function PublicOnlyRoute({ children }: { children: ReactNode }) {
   const { user, authLoading } = useApp();
+  const location = useLocation();
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 text-sm">
@@ -30,7 +33,7 @@ function PublicOnlyRoute({ children }: { children: ReactNode }) {
     );
   }
   if (user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={resolvePostAuthRedirect(location.search)} replace />;
   }
   return <>{children}</>;
 }
@@ -46,6 +49,7 @@ export function AppRoutes() {
           </PublicOnlyRoute>
         }
       />
+      <Route path="/share/:token" element={<ShareImportPage />} />
       <Route
         path="/"
         element={

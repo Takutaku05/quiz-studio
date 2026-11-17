@@ -139,4 +139,125 @@ describe('Bolt 03: localStorageRepositories', () => {
       ).rejects.toThrow();
     });
   });
+
+  describe('LocalQuizRepository Sharing & Copy Import', () => {
+    it('enables sharing, fetches summary, imports an independent copy, and prevents duplicates', async () => {
+      const owner = await authRepo.signUp('owner@example.com', 'password123');
+      const recipient = await authRepo.signUp('recipient@example.com', 'password123');
+
+      const ownerQuiz = await quizRepo.create(owner.id, {
+        title: '英単語テスト',
+        questions: [
+          {
+            question: 'apple の意味は？',
+            choice1: 'りんご',
+            choice2: 'みかん',
+            choice3: null,
+            choice4: null,
+            answer: 1,
+            explanation: 'Apple はりんごです。',
+          },
+        ],
+      });
+
+      expect(await quizRepo.getShare(ownerQuiz.id, owner.id)).toBeNull();
+      await expect(quizRepo.enableShare(ownerQuiz.id, recipient.id)).rejects.toThrow(
+        '問題集が見つかりません',
+      );
+
+      const share = await quizRepo.enableShare(ownerQuiz.id, owner.id);
+      expect(share.isActive).toBe(true);
+      expect(share.token).toBeTruthy();
+
+      expect(await quizRepo.getSharedQuizSummary(share.token)).toEqual({
+        title: '英単語テスト',
+        questionCount: 1,
+      });
+
+      // Owner opening own share returns own_quiz without duplicating
+      const ownResult = await quizRepo.importByShareToken(share.token, owner.id);
+      expect(ownResult).toEqual({
+        quizId: ownerQuiz.id,
+        title: '英単語テスト',
+        questionCount: 1,
+        status: 'own_quiz',
+      });
+      expect(await quizRepo.listByUser(owner.id)).toHaveLength(1);
+
+      // Recipient imports as a separate copy
+      const imported = await quizRepo.importByShareToken(share.token, recipient.id);
+      expect(imported.status).toBe('imported');
+      expect(imported.quizId).not.toBe(ownerQuiz.id);
+      expect(imported.title).toBe('英単語テスト');
+      expect(imported.questionCount).toBe(1);
+
+      // Re-importing the same link returns already_imported without creating a second copy
+      const secondImport = await quizRepo.importByShareToken(share.token, recipient.id);
+      expect(secondImport).toEqual({
+        quizId: imported.quizId,
+        title: '英単語テスト',
+        questionCount: 1,
+        status: 'already_imported',
+      });
+      expect(await quizRepo.listByUser(recipient.id)).toHaveLength(1);
+
+      // Deleting the original quiz leaves the recipient's copy intact
+      expect(await quizRepo.delete(ownerQuiz.id, owner.id)).toBe(true);
+      const recipientQuiz = await quizRepo.getById(imported.quizId, recipient.id);
+      expect(recipientQuiz).not.toBeNull();
+      expect(recipientQuiz?.questions[0].question).toBe('apple の意味は？');
+      expect(await quizRepo.getSharedQuizSummary(share.token)).toBeNull();
+    });
+
+    it('supports disabling, resuming, regenerating share links, and re-importing after recipient delete', async () => {
+      const owner = await authRepo.signUp('owner2@example.com', 'password123');
+      const recipient = await authRepo.signUp('recipient2@example.com', 'password123');
+
+      const ownerQuiz = await quizRepo.create(owner.id, {
+        title: '数学小テスト',
+        questions: [
+          {
+            question: '2+3は？',
+            choice1: '5',
+            choice2: '6',
+            choice3: null,
+            choice4: null,
+            answer: 1,
+            explanation: null,
+          },
+        ],
+      });
+
+      const firstShare = await quizRepo.enableShare(ownerQuiz.id, owner.id);
+      const disabled = await quizRepo.disableShare(ownerQuiz.id, owner.id);
+      expect(disabled.isActive).toBe(false);
+      expect(await quizRepo.getSharedQuizSummary(firstShare.token)).toBeNull();
+      await expect(quizRepo.importByShareToken(firstShare.token, recipient.id)).rejects.toThrow(
+        '共有が停止されています',
+      );
+
+      // Resuming preserves the existing token
+      const resumed = await quizRepo.enableShare(ownerQuiz.id, owner.id);
+      expect(resumed.token).toBe(firstShare.token);
+      expect(resumed.isActive).toBe(true);
+
+      // Regenerating rotates token and invalidates the old token
+      const regenerated = await quizRepo.regenerateShare(ownerQuiz.id, owner.id);
+      expect(regenerated.token).not.toBe(firstShare.token);
+      expect(await quizRepo.getSharedQuizSummary(firstShare.token)).toBeNull();
+      expect(await quizRepo.getSharedQuizSummary(regenerated.token)).toEqual({
+        title: '数学小テスト',
+        questionCount: 1,
+      });
+
+      // Recipient imports, deletes their copy, and can re-import from the share link
+      const firstImport = await quizRepo.importByShareToken(regenerated.token, recipient.id);
+      expect(firstImport.status).toBe('imported');
+      await quizRepo.delete(firstImport.quizId, recipient.id);
+
+      const reImported = await quizRepo.importByShareToken(regenerated.token, recipient.id);
+      expect(reImported.status).toBe('imported');
+      expect(reImported.quizId).not.toBe(firstImport.quizId);
+    });
+  });
 });

@@ -1,14 +1,51 @@
-import type { PasskeyCredential, Question, Quiz, User } from '../domain/types';
+import type {
+  ImportSharedQuizResult,
+  PasskeyCredential,
+  Question,
+  Quiz,
+  QuizShare,
+  SharedQuizSummary,
+  User,
+} from '../domain/types';
 import type { AuthRepository, CreateQuizInput, QuizRepository } from './types';
 
 const STORAGE_KEYS = {
   USERS: 'csv_quiz_studio_users',
   SESSION_USER_ID: 'csv_quiz_studio_session_user_id',
   QUIZZES: 'csv_quiz_studio_quizzes',
+  QUIZ_SHARES: 'csv_quiz_studio_quiz_shares',
+  QUIZ_SHARE_IMPORTS: 'csv_quiz_studio_quiz_share_imports',
 } as const;
 
 interface StoredUser extends User {
   password: string;
+}
+
+interface StoredQuizShare extends QuizShare {
+  ownerId: string;
+}
+
+interface StoredQuizShareImport {
+  id: string;
+  shareId: string;
+  recipientUserId: string;
+  importedQuizId: string;
+  importedAt: string;
+}
+
+function toPublicShare(stored: StoredQuizShare): QuizShare {
+  return {
+    id: stored.id,
+    quizId: stored.quizId,
+    token: stored.token,
+    isActive: stored.isActive,
+    createdAt: stored.createdAt,
+    updatedAt: stored.updatedAt,
+  };
+}
+
+function generateShareToken(): string {
+  return generateId().replace(/-/g, '');
 }
 
 function generateId(): string {
@@ -142,6 +179,8 @@ export class LocalAuthRepository implements AuthRepository {
 }
 
 export class LocalQuizRepository implements QuizRepository {
+  private readonly inFlightImports = new Map<string, Promise<ImportSharedQuizResult>>();
+
   async listByUser(userId: string): Promise<Quiz[]> {
     const quizzes = readJson<Quiz[]>(STORAGE_KEYS.QUIZZES, []);
     return quizzes
@@ -193,6 +232,224 @@ export class LocalQuizRepository implements QuizRepository {
     }
     const nextQuizzes = quizzes.filter((q) => q.id !== quizId);
     writeJson(STORAGE_KEYS.QUIZZES, nextQuizzes);
+
+    const shares = readJson<StoredQuizShare[]>(STORAGE_KEYS.QUIZ_SHARES, []);
+    const nextShares = shares.filter((s) => s.quizId !== quizId);
+    if (nextShares.length !== shares.length) {
+      writeJson(STORAGE_KEYS.QUIZ_SHARES, nextShares);
+    }
+
     return true;
+  }
+
+  async getShare(quizId: string, userId: string): Promise<QuizShare | null> {
+    const ownerQuiz = await this.getById(quizId, userId);
+    if (!ownerQuiz) return null;
+    const shares = readJson<StoredQuizShare[]>(STORAGE_KEYS.QUIZ_SHARES, []);
+    const found = shares.find((s) => s.quizId === quizId && s.ownerId === userId);
+    return found ? toPublicShare(found) : null;
+  }
+
+  async enableShare(quizId: string, userId: string): Promise<QuizShare> {
+    const ownerQuiz = await this.getById(quizId, userId);
+    if (!ownerQuiz) {
+      throw new Error('問題集が見つかりません。');
+    }
+
+    const shares = readJson<StoredQuizShare[]>(STORAGE_KEYS.QUIZ_SHARES, []);
+    const now = new Date().toISOString();
+    const existingIndex = shares.findIndex((s) => s.quizId === quizId && s.ownerId === userId);
+    if (existingIndex >= 0) {
+      const updated: StoredQuizShare = {
+        ...shares[existingIndex],
+        isActive: true,
+        updatedAt: now,
+      };
+      const next = [...shares];
+      next[existingIndex] = updated;
+      writeJson(STORAGE_KEYS.QUIZ_SHARES, next);
+      return toPublicShare(updated);
+    }
+
+    const created: StoredQuizShare = {
+      id: generateId(),
+      quizId,
+      ownerId: userId,
+      token: generateShareToken(),
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    writeJson(STORAGE_KEYS.QUIZ_SHARES, [...shares, created]);
+    return toPublicShare(created);
+  }
+
+  async disableShare(quizId: string, userId: string): Promise<QuizShare> {
+    const shares = readJson<StoredQuizShare[]>(STORAGE_KEYS.QUIZ_SHARES, []);
+    const existingIndex = shares.findIndex((s) => s.quizId === quizId && s.ownerId === userId);
+    if (existingIndex < 0) {
+      throw new Error('共有設定が見つかりません。');
+    }
+
+    const updated: StoredQuizShare = {
+      ...shares[existingIndex],
+      isActive: false,
+      updatedAt: new Date().toISOString(),
+    };
+    const next = [...shares];
+    next[existingIndex] = updated;
+    writeJson(STORAGE_KEYS.QUIZ_SHARES, next);
+    return toPublicShare(updated);
+  }
+
+  async regenerateShare(quizId: string, userId: string): Promise<QuizShare> {
+    const ownerQuiz = await this.getById(quizId, userId);
+    if (!ownerQuiz) {
+      throw new Error('問題集が見つかりません。');
+    }
+
+    const shares = readJson<StoredQuizShare[]>(STORAGE_KEYS.QUIZ_SHARES, []);
+    const now = new Date().toISOString();
+    const existingIndex = shares.findIndex((s) => s.quizId === quizId && s.ownerId === userId);
+    const nextShare: StoredQuizShare =
+      existingIndex >= 0
+        ? {
+            ...shares[existingIndex],
+            token: generateShareToken(),
+            isActive: true,
+            updatedAt: now,
+          }
+        : {
+            id: generateId(),
+            quizId,
+            ownerId: userId,
+            token: generateShareToken(),
+            isActive: true,
+            createdAt: now,
+            updatedAt: now,
+          };
+
+    const next =
+      existingIndex >= 0
+        ? shares.map((s, idx) => (idx === existingIndex ? nextShare : s))
+        : [...shares, nextShare];
+    writeJson(STORAGE_KEYS.QUIZ_SHARES, next);
+    return toPublicShare(nextShare);
+  }
+
+  async getSharedQuizSummary(token: string): Promise<SharedQuizSummary | null> {
+    const cleanToken = token.trim();
+    if (!cleanToken) return null;
+
+    const shares = readJson<StoredQuizShare[]>(STORAGE_KEYS.QUIZ_SHARES, []);
+    const share = shares.find((s) => s.token === cleanToken && s.isActive);
+    if (!share) return null;
+
+    const quizzes = readJson<Quiz[]>(STORAGE_KEYS.QUIZZES, []);
+    const quiz = quizzes.find((q) => q.id === share.quizId);
+    if (!quiz) return null;
+
+    return {
+      title: quiz.title,
+      questionCount: quiz.questions.length,
+    };
+  }
+
+  async importByShareToken(token: string, userId: string): Promise<ImportSharedQuizResult> {
+    const cleanToken = token.trim();
+    if (!cleanToken) {
+      throw new Error('共有リンクが見つからないか、共有が停止されています。');
+    }
+
+    const lockKey = `${cleanToken}:${userId}`;
+    const existingPromise = this.inFlightImports.get(lockKey);
+    if (existingPromise) {
+      return existingPromise;
+    }
+
+    const run = this.executeImportByShareToken(cleanToken, userId).finally(() => {
+      this.inFlightImports.delete(lockKey);
+    });
+    this.inFlightImports.set(lockKey, run);
+    return run;
+  }
+
+  private async executeImportByShareToken(
+    cleanToken: string,
+    userId: string,
+  ): Promise<ImportSharedQuizResult> {
+    const shares = readJson<StoredQuizShare[]>(STORAGE_KEYS.QUIZ_SHARES, []);
+    const share = shares.find((s) => s.token === cleanToken && s.isActive);
+    if (!share) {
+      throw new Error('共有リンクが見つからないか、共有が停止されています。');
+    }
+
+    const quizzes = readJson<Quiz[]>(STORAGE_KEYS.QUIZZES, []);
+    const sourceQuiz = quizzes.find((q) => q.id === share.quizId);
+    if (!sourceQuiz) {
+      throw new Error('共有元の問題集が見つかりません。');
+    }
+
+    if (sourceQuiz.userId === userId) {
+      return {
+        quizId: sourceQuiz.id,
+        title: sourceQuiz.title,
+        questionCount: sourceQuiz.questions.length,
+        status: 'own_quiz',
+      };
+    }
+
+    const imports = readJson<StoredQuizShareImport[]>(STORAGE_KEYS.QUIZ_SHARE_IMPORTS, []);
+    const existingImport = imports.find(
+      (item) => item.shareId === share.id && item.recipientUserId === userId,
+    );
+    if (existingImport) {
+      const existingQuiz = quizzes.find(
+        (q) => q.id === existingImport.importedQuizId && q.userId === userId,
+      );
+      if (existingQuiz) {
+        return {
+          quizId: existingQuiz.id,
+          title: existingQuiz.title,
+          questionCount: existingQuiz.questions.length,
+          status: 'already_imported',
+        };
+      }
+    }
+
+    const created = await this.create(userId, {
+      title: sourceQuiz.title,
+      questions: sourceQuiz.questions
+        .slice()
+        .sort((a, b) => a.orderIndex - b.orderIndex)
+        .map((q) => ({
+          question: q.question,
+          choice1: q.choice1,
+          choice2: q.choice2,
+          choice3: q.choice3,
+          choice4: q.choice4,
+          answer: q.answer,
+          explanation: q.explanation,
+        })),
+    });
+
+    const nextRecord: StoredQuizShareImport = {
+      id: generateId(),
+      shareId: share.id,
+      recipientUserId: userId,
+      importedQuizId: created.id,
+      importedAt: new Date().toISOString(),
+    };
+    const filteredImports = imports.filter(
+      (item) => !(item.shareId === share.id && item.recipientUserId === userId),
+    );
+    writeJson(STORAGE_KEYS.QUIZ_SHARE_IMPORTS, [...filteredImports, nextRecord]);
+
+    return {
+      quizId: created.id,
+      title: created.title,
+      questionCount: created.questions.length,
+      status: 'imported',
+    };
   }
 }

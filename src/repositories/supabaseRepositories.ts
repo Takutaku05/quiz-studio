@@ -1,5 +1,15 @@
 import type { SupabaseClient, User as SupabaseUser } from '@supabase/supabase-js';
-import type { AnswerNumber, PasskeyCredential, Question, Quiz, User } from '../domain/types';
+import type {
+  AnswerNumber,
+  ImportSharedQuizResult,
+  PasskeyCredential,
+  Question,
+  Quiz,
+  QuizShare,
+  SharedQuizSummary,
+  User,
+} from '../domain/types';
+import { sanitizeRedirectPath } from '../lib/shareRedirect';
 import type { AuthRepository, CreateQuizInput, QuizRepository } from './types';
 
 interface QuestionRow {
@@ -21,6 +31,26 @@ interface QuizRow {
   title: string;
   created_at: string;
   questions: QuestionRow[] | null;
+}
+
+interface QuizShareRow {
+  id: string;
+  quiz_id: string;
+  token: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+function toQuizShare(row: QuizShareRow): QuizShare {
+  return {
+    id: row.id,
+    quizId: row.quiz_id,
+    token: row.token,
+    isActive: row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 const QUIZ_SELECT =
@@ -229,7 +259,7 @@ export class SupabaseAuthRepository implements AuthRepository {
     return data.session ? toUser(data.session.user) : null;
   }
 
-  async signUp(email: string, password: string): Promise<User> {
+  async signUp(email: string, password: string, redirectPath?: string): Promise<User> {
     const normalizedEmail = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
       throw new Error('有効なメールアドレスを入力してください。');
@@ -238,14 +268,19 @@ export class SupabaseAuthRepository implements AuthRepository {
       throw new Error('パスワードは6文字以上で入力してください。');
     }
 
+    const safeRedirectPath = sanitizeRedirectPath(redirectPath);
+    const emailRedirectTo =
+      typeof window !== 'undefined'
+        ? safeRedirectPath
+          ? `${window.location.origin}${safeRedirectPath}`
+          : `${window.location.origin}/login`
+        : undefined;
+
     const { data, error } = await this.client.auth.signUp({
       email: normalizedEmail,
       password,
-      // Send the confirmation link back to whichever origin the user signed up from.
-      options:
-        typeof window !== 'undefined'
-          ? { emailRedirectTo: `${window.location.origin}/login` }
-          : undefined,
+      // Send the confirmation link back to whichever origin (and optional share path) the user signed up from.
+      options: emailRedirectTo ? { emailRedirectTo } : undefined,
     });
     if (error) throw new Error(toAuthErrorMessage(error.message));
     // Supabase returns a user with no identities when the email already exists.
@@ -271,13 +306,18 @@ export class SupabaseAuthRepository implements AuthRepository {
     return toUser(data.user);
   }
 
-  async signInWithGoogle(): Promise<void> {
+  async signInWithGoogle(redirectPath?: string): Promise<void> {
+    const safeRedirectPath = sanitizeRedirectPath(redirectPath);
+    const redirectTo =
+      typeof window !== 'undefined'
+        ? safeRedirectPath
+          ? `${window.location.origin}/login?redirect=${encodeURIComponent(safeRedirectPath)}`
+          : `${window.location.origin}/login`
+        : undefined;
+
     const { error } = await this.client.auth.signInWithOAuth({
       provider: 'google',
-      options:
-        typeof window !== 'undefined'
-          ? { redirectTo: `${window.location.origin}/login` }
-          : undefined,
+      options: redirectTo ? { redirectTo } : undefined,
     });
     if (error) {
       throw new Error(toAuthErrorMessage(error.message));
@@ -431,5 +471,73 @@ export class SupabaseQuizRepository implements QuizRepository {
       throw new Error(error.message);
     }
     return (data ?? []).length > 0;
+  }
+
+  async getShare(quizId: string, userId: string): Promise<QuizShare | null> {
+    const { data, error } = await this.client
+      .from('quiz_shares')
+      .select('id, quiz_id, token, is_active, created_at, updated_at')
+      .eq('quiz_id', quizId)
+      .eq('owner_id', userId)
+      .maybeSingle();
+    if (error) {
+      if (error.code === '22P02') return null;
+      throw new Error(error.message);
+    }
+    return data ? toQuizShare(data as QuizShareRow) : null;
+  }
+
+  async enableShare(quizId: string, _userId: string): Promise<QuizShare> {
+    const { data, error } = await this.client.rpc('enable_quiz_share', {
+      p_quiz_id: quizId,
+    });
+    if (error || !data) {
+      throw new Error(error?.message ?? '共有リンクの作成に失敗しました。');
+    }
+    return data as QuizShare;
+  }
+
+  async disableShare(quizId: string, _userId: string): Promise<QuizShare> {
+    const { data, error } = await this.client.rpc('disable_quiz_share', {
+      p_quiz_id: quizId,
+    });
+    if (error || !data) {
+      throw new Error(error?.message ?? '共有の停止に失敗しました。');
+    }
+    return data as QuizShare;
+  }
+
+  async regenerateShare(quizId: string, _userId: string): Promise<QuizShare> {
+    const { data, error } = await this.client.rpc('regenerate_quiz_share', {
+      p_quiz_id: quizId,
+    });
+    if (error || !data) {
+      throw new Error(error?.message ?? '共有リンクの再発行に失敗しました。');
+    }
+    return data as QuizShare;
+  }
+
+  async getSharedQuizSummary(token: string): Promise<SharedQuizSummary | null> {
+    const trimmed = token.trim();
+    if (!trimmed) return null;
+    const { data, error } = await this.client.rpc('get_shared_quiz_summary', {
+      p_token: trimmed,
+    });
+    if (error) throw new Error(error.message);
+    return (data as SharedQuizSummary | null) ?? null;
+  }
+
+  async importByShareToken(token: string, _userId: string): Promise<ImportSharedQuizResult> {
+    const trimmed = token.trim();
+    if (!trimmed) {
+      throw new Error('共有リンクが見つからないか、共有が停止されています。');
+    }
+    const { data, error } = await this.client.rpc('import_shared_quiz', {
+      p_token: trimmed,
+    });
+    if (error || !data) {
+      throw new Error(error?.message ?? '共有問題集のインポートに失敗しました。');
+    }
+    return data as ImportSharedQuizResult;
   }
 }

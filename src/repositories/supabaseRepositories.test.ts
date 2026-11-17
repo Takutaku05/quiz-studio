@@ -354,3 +354,106 @@ describe('SupabaseAuthRepository passkey methods', () => {
     expect(del).toHaveBeenCalledWith({ passkeyId: 'pk-1' });
   });
 });
+
+describe('Supabase share & redirect support', () => {
+  it('passes safe share redirect paths through signUp and signInWithGoogle', async () => {
+    const signUp = vi.fn().mockResolvedValue({ data: { user: fakeUser, session: {} }, error: null });
+    const signInWithOAuth = vi.fn().mockResolvedValue({ data: { url: 'https://accounts.google.com' }, error: null });
+    const repo = new SupabaseAuthRepository({
+      auth: { signUp, signInWithOAuth },
+    } as unknown as SupabaseClient);
+
+    await repo.signUp('a@example.com', 'secret1', '/share/tok123');
+    expect(signUp).toHaveBeenCalledWith({
+      email: 'a@example.com',
+      password: 'secret1',
+      options: { emailRedirectTo: `${window.location.origin}/share/tok123` },
+    });
+
+    await repo.signInWithGoogle('/share/tok123');
+    expect(signInWithOAuth).toHaveBeenCalledWith({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/login?redirect=%2Fshare%2Ftok123`,
+      },
+    });
+
+    // Rejects unsafe external redirects and falls back to /login
+    await repo.signInWithGoogle('https://evil.example.com');
+    expect(signInWithOAuth).toHaveBeenLastCalledWith({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}/login` },
+    });
+  });
+
+  it('fetches, enables, disables, regenerates, summarizes, and imports quiz shares via Supabase', async () => {
+    const shareRow = {
+      id: 'share-1',
+      quiz_id: 'quiz-1',
+      token: 'tok-abc',
+      is_active: true,
+      created_at: '2026-11-17T00:00:00Z',
+      updated_at: '2026-11-17T00:00:00Z',
+    };
+    const shareMapped = {
+      id: 'share-1',
+      quizId: 'quiz-1',
+      token: 'tok-abc',
+      isActive: true,
+      createdAt: '2026-11-17T00:00:00Z',
+      updatedAt: '2026-11-17T00:00:00Z',
+    };
+
+    const builder = {
+      select: () => builder,
+      eq: () => builder,
+      maybeSingle: vi.fn().mockResolvedValue({ data: shareRow, error: null }),
+    };
+
+    const rpc = vi.fn(async (fn: string, params: Record<string, unknown>) => {
+      if (fn === 'enable_quiz_share') return { data: shareMapped, error: null };
+      if (fn === 'disable_quiz_share') return { data: { ...shareMapped, isActive: false }, error: null };
+      if (fn === 'regenerate_quiz_share') {
+        return { data: { ...shareMapped, token: 'tok-new' }, error: null };
+      }
+      if (fn === 'get_shared_quiz_summary') {
+        return { data: { title: '共有問題集', questionCount: 5 }, error: null };
+      }
+      if (fn === 'import_shared_quiz') {
+        expect(params).toEqual({ p_token: 'tok-abc' });
+        return {
+          data: {
+            quizId: 'quiz-copy-1',
+            title: '共有問題集',
+            questionCount: 5,
+            status: 'imported',
+          },
+          error: null,
+        };
+      }
+      return { data: null, error: null };
+    });
+
+    const repo = new SupabaseQuizRepository({
+      from: () => builder,
+      rpc,
+    } as unknown as SupabaseClient);
+
+    expect(await repo.getShare('quiz-1', 'u1')).toEqual(shareMapped);
+    expect(await repo.enableShare('quiz-1', 'u1')).toEqual(shareMapped);
+    expect(await repo.disableShare('quiz-1', 'u1')).toMatchObject({ isActive: false });
+    expect(await repo.regenerateShare('quiz-1', 'u1')).toMatchObject({ token: 'tok-new' });
+    expect(await repo.getSharedQuizSummary('  ')).toBeNull();
+    expect(await repo.getSharedQuizSummary('tok-abc')).toEqual({
+      title: '共有問題集',
+      questionCount: 5,
+    });
+    await expect(repo.importByShareToken('  ', 'u2')).rejects.toThrow('共有リンクが見つからない');
+    expect(await repo.importByShareToken(' tok-abc ', 'u2')).toEqual({
+      quizId: 'quiz-copy-1',
+      title: '共有問題集',
+      questionCount: 5,
+      status: 'imported',
+    });
+  });
+});

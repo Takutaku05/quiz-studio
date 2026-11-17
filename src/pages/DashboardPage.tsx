@@ -1,32 +1,50 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   BookOpen,
+  CheckCircle2,
   Download,
   FileSpreadsheet,
   KeyRound,
   LogOut,
   Play,
   Plus,
+  Share2,
   Trash2,
+  X,
 } from 'lucide-react';
 import { CsvUploadModal } from '../components/CsvUploadModal';
 import { PasskeySettingsModal } from '../components/PasskeySettingsModal';
+import { ShareQuizModal } from '../components/ShareQuizModal';
 import { useApp } from '../context/AppContext';
 import { downloadCsvTemplate } from '../domain/csvTemplate';
 import { downloadXlsxTemplate } from '../domain/xlsxTemplate';
-import type { ParsedQuestion, Quiz } from '../domain/types';
+import type { ImportSharedQuizResult, ParsedQuestion, Quiz } from '../domain/types';
 
 export function DashboardPage() {
   const { user, authRepository, quizRepository, signOut } = useApp();
+  const location = useLocation();
   const navigate = useNavigate();
 
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [loading, setLoading] = useState(true);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isPasskeyOpen, setIsPasskeyOpen] = useState(false);
+  const [sharingQuiz, setSharingQuiz] = useState<Quiz | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [downloadingXlsx, setDownloadingXlsx] = useState(false);
+  const [importNotice, setImportNotice] = useState<ImportSharedQuizResult | null>(() => {
+    const state = location.state as { importNotice?: ImportSharedQuizResult } | null;
+    return state?.importNotice ?? null;
+  });
+
+  useEffect(() => {
+    const state = location.state as { importNotice?: ImportSharedQuizResult } | null;
+    if (state?.importNotice) {
+      setImportNotice(state.importNotice);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
 
   const loadQuizzes = useCallback(async () => {
     if (!user) return;
@@ -106,6 +124,41 @@ export function DashboardPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-6 sm:py-8">
+        {importNotice && (
+          <div
+            role="status"
+            className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          >
+            <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5 sm:mt-0" />
+              <p className="text-sm font-medium text-emerald-900">
+                {importNotice.status === 'imported'
+                  ? `「${importNotice.title}」（${importNotice.questionCount}問）をマイ問題集にインポートしました。`
+                  : importNotice.status === 'already_imported'
+                    ? `「${importNotice.title}」はすでにマイ問題集にインポート済みです。`
+                    : `「${importNotice.title}」はあなたが作成した問題集です。`}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Link
+                to={`/quiz/${importNotice.quizId}`}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors"
+              >
+                <Play className="w-3.5 h-3.5" />
+                <span>{importNotice.status === 'imported' ? '今すぐプレイ' : '問題集を開く'}</span>
+              </Link>
+              <button
+                type="button"
+                onClick={() => setImportNotice(null)}
+                aria-label="通知を閉じる"
+                className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900">マイ問題集</h1>
@@ -236,15 +289,26 @@ export function DashboardPage() {
                         </button>
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteId(quiz.id)}
-                        aria-label="削除"
-                        className="inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 text-sm transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        <span>削除</span>
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setSharingQuiz(quiz)}
+                          aria-label="共有"
+                          className="inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl border border-slate-200 text-slate-700 hover:text-indigo-700 hover:border-indigo-200 hover:bg-indigo-50 text-sm transition-colors cursor-pointer"
+                        >
+                          <Share2 className="w-4 h-4" />
+                          <span>共有</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteId(quiz.id)}
+                          aria-label="削除"
+                          className="inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 text-sm transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          <span>削除</span>
+                        </button>
+                      </>
                     )}
                   </div>
                 </article>
@@ -263,6 +327,12 @@ export function DashboardPage() {
         isOpen={isPasskeyOpen}
         onClose={() => setIsPasskeyOpen(false)}
         authRepository={authRepository}
+      />
+      <ShareQuizModal
+        quiz={sharingQuiz}
+        userId={user?.id ?? ''}
+        quizRepository={quizRepository}
+        onClose={() => setSharingQuiz(null)}
       />
     </div>
   );
