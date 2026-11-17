@@ -14,15 +14,18 @@
 5. 正誤判定は選択された選択肢の `isCorrect`（または `originalNumber === question.answer`）で行うため、選択肢シャッフル後も判定がズレない。
 
 ### 2.2 認証・データ永続化（初期フェーズ：LocalStorage実装）
-将来の Supabase（Auth + PostgreSQL + RLS）移行を見据え、リポジトリインターフェースで抽象化する。初期フェーズではブラウザの `localStorage` をバックエンドとして即座に動作確認可能な実装を提供する。
+Supabase（Auth + PostgreSQL + RLS）実装と `localStorage` 実装をリポジトリインターフェースで抽象化する。Supabase の接続情報が設定されていればSupabase版、未設定時とテスト実行時は `localStorage` 版を使う（Supabase版は実装済み）。
 
 #### ドメインモデル（Supabase テーブル想定と1対1対応）
 - **User**: `{ id: string, email: string, createdAt: string }`
 - **Quiz**: `{ id: string, userId: string, title: string, createdAt: string, questions: Question[] }`
 - **Question**: `{ id: string, quizId: string, orderIndex: number, question: string, choice1: string, choice2: string, choice3: string | null, choice4: string | null, answer: 1 | 2 | 3 | 4, explanation: string | null }`
+- **QuizShare**: `{ id: string, quizId: string, token: string, isActive: boolean, createdAt: string, updatedAt: string }`（Bolt 09）
+- **PasskeyCredential**: `{ id: string, friendlyName: string | null, createdAt: string, lastUsedAt: string | null }`（Bolt 07）
 
 #### アクセス制御（RLS相当のドメイン制約）
 - 全ての問題集の取得・詳細表示・削除は `quiz.userId === currentUser.id` を満たすもののみ許可し、別アカウントのデータは一切参照・操作できないようにする。
+- 例外として、有効な共有トークンを持つユーザーは、共有された問題集のタイトルと問題数の取得と、自分のアカウントへのコピー作成のみ行える（Bolt 09）。
 
 ## 3. Bolt 一覧
 
@@ -35,3 +38,5 @@
 | Bolt 05 | UI: クイズプレイ画面（3フェーズ） | UI (Quiz Player) | `/quiz/:quizId` 設定・出題（一問一答/テスト）・リザルト・誤答再挑戦 |
 | Bolt 06 | Google OAuth ログイン & 認証状態同期 | Auth / UI | `signInWithOAuth`、`onAuthStateChange`、OAuthエラー回収、`/login` Googleログイン導線 |
 | Bolt 07 | パスキー（WebAuthn）ログイン & 管理 | Auth / UI | `signInWithPasskey`、`registerPasskey`、`passkey.*` 管理モーダル、WebAuthnエラー変換 |
+| Bolt 08 | Excel（.xlsx）取込 & テンプレート | Domain / UI | `.xlsx` パース・シート選択、CSV/Excel テンプレート生成、アップロードモーダル拡張 |
+| Bolt 09 | 問題集のURL / QRコード共有 | DB / Auth / UI | `quiz_shares` / `import_shared_quiz`、認証後リダイレクト、`/share/:token` 自動インポート、共有モーダル |
