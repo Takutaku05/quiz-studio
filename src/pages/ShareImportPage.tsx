@@ -15,6 +15,10 @@ export function ShareImportPage() {
 
   const [error, setError] = useState<string | null>(null);
   const startedKeyRef = useRef<string | null>(null);
+  // Depend on the user id (not the object): Supabase re-emits auth events with fresh
+  // User objects (e.g. INITIAL_SESSION + SIGNED_IN, token refresh), which would
+  // otherwise cancel the in-flight import while startedKeyRef blocks a retry.
+  const userId = user?.id ?? null;
 
   useEffect(() => {
     if (authLoading) return;
@@ -26,14 +30,14 @@ export function ShareImportPage() {
       return;
     }
 
-    if (!user) {
+    if (!userId) {
       savePendingShareToken(cleanToken);
       const redirect = encodeURIComponent(buildSharePath(cleanToken));
       navigate(`/login?redirect=${redirect}`, { replace: true });
       return;
     }
 
-    const runKey = `${user.id}:${cleanToken}`;
+    const runKey = `${userId}:${cleanToken}`;
     if (startedKeyRef.current === runKey) return;
     startedKeyRef.current = runKey;
 
@@ -46,7 +50,7 @@ export function ShareImportPage() {
     let active = true;
     setError(null);
     quizRepository
-      .importByShareToken(cleanToken, user.id)
+      .importByShareToken(cleanToken, userId)
       .then((result) => {
         clearPendingShareToken();
         if (!active) return;
@@ -68,7 +72,7 @@ export function ShareImportPage() {
     return () => {
       active = false;
     };
-  }, [authLoading, navigate, quizRepository, token, user]);
+  }, [authLoading, navigate, quizRepository, token, userId]);
 
   if (error) {
     return (

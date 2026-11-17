@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AppProvider } from '../context/AppContext';
-import type { ImportSharedQuizResult } from '../domain/types';
+import type { ImportSharedQuizResult, User } from '../domain/types';
 import { getPendingShareToken } from '../lib/shareRedirect';
 import {
   LocalAuthRepository,
@@ -116,5 +116,56 @@ describe('ShareImportPage', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('共有リンクが見つからない');
     expect(screen.getByRole('link', { name: 'ダッシュボードへ戻る' })).toHaveAttribute('href', '/');
+  });
+
+  it('completes the import even if auth re-emits a fresh user object mid-request', async () => {
+    const authRepo = new LocalAuthRepository();
+    const quizRepo = new LocalQuizRepository();
+    const owner = await authRepo.signUp('owner-reemit@example.com', 'password123');
+    const quiz = await quizRepo.create(owner.id, {
+      title: '再通知クイズ',
+      questions: [
+        { question: 'Q1', choice1: 'A', choice2: 'B', choice3: null, choice4: null, answer: 1, explanation: null },
+      ],
+    });
+    const share = await quizRepo.enableShare(quiz.id, owner.id);
+    await authRepo.signOut();
+    const friend = await authRepo.signUp('friend-reemit@example.com', 'password123');
+
+    // Mimic Supabase emitting INITIAL_SESSION / SIGNED_IN with distinct User objects.
+    let emit: ((u: User | null) => void) | null = null;
+    authRepo.onAuthStateChange = (cb: (u: User | null) => void) => {
+      emit = cb;
+      cb({ ...friend });
+      return () => {};
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const originalImport = quizRepo.importByShareToken.bind(quizRepo);
+    quizRepo.importByShareToken = async (token, userId) => {
+      await gate;
+      return originalImport(token, userId);
+    };
+
+    render(
+      <AppProvider authRepository={authRepo} quizRepository={quizRepo}>
+        <MemoryRouter initialEntries={[`/share/${share.token}`]}>
+          <Routes>
+            <Route path="/share/:token" element={<ShareImportPage />} />
+            <Route path="/" element={<DashboardEcho />} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+
+    await screen.findByText('共有された問題集を読み込んでいます');
+    act(() => emit!({ ...friend }));
+    await act(async () => {
+      release();
+    });
+
+    expect(await screen.findByTestId('notice')).toHaveTextContent('imported:再通知クイズ:1');
   });
 });
