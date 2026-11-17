@@ -34,7 +34,7 @@ export function decodeCsvBuffer(buffer: ArrayBuffer): string {
   return text.replace(/^\uFEFF/, '');
 }
 
-function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+export function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
   if (typeof file.arrayBuffer === 'function') {
     return file.arrayBuffer();
   }
@@ -60,23 +60,15 @@ export async function parseCsvFile(file: File): Promise<CsvParseResult> {
 
 type RawCsvRow = Record<string, string | undefined>;
 
-export function parseAndValidateCsv(csvText: string): CsvParseResult {
-  const trimmedInput = csvText.replace(/^\uFEFF/, '').trim();
-  if (!trimmedInput) {
-    return {
-      ok: false,
-      questions: [],
-      errors: [{ row: 1, message: 'CSVファイルが空です。' }],
-    };
-  }
+export interface RawQuestionRowEntry {
+  rowNumber: number;
+  data: RawCsvRow;
+}
 
-  const parsed = Papa.parse<RawCsvRow>(trimmedInput, {
-    header: true,
-    skipEmptyLines: 'greedy',
-    transformHeader: (header) => header.trim(),
-  });
-
-  const headers = parsed.meta.fields ?? [];
+export function validateQuestionRows(
+  headers: string[],
+  entries: RawQuestionRowEntry[],
+): CsvParseResult {
   const missingHeaders = REQUIRED_CSV_HEADERS.filter(
     (requiredHeader) => !headers.includes(requiredHeader),
   );
@@ -94,7 +86,7 @@ export function parseAndValidateCsv(csvText: string): CsvParseResult {
     };
   }
 
-  if (parsed.data.length === 0) {
+  if (entries.length === 0) {
     return {
       ok: false,
       questions: [],
@@ -105,8 +97,7 @@ export function parseAndValidateCsv(csvText: string): CsvParseResult {
   const errors: CsvValidationError[] = [];
   const questions: ParsedQuestion[] = [];
 
-  parsed.data.forEach((rawRow, index) => {
-    const rowNumber = index + 2; // 1-based row number including header row
+  for (const { rowNumber, data: rawRow } of entries) {
     const questionText = (rawRow.question ?? '').trim();
     const choice1 = (rawRow.choice1 ?? '').trim();
     const choice2 = (rawRow.choice2 ?? '').trim();
@@ -177,7 +168,7 @@ export function parseAndValidateCsv(csvText: string): CsvParseResult {
         });
       }
     }
-  });
+  }
 
   if (errors.length > 0) {
     return {
@@ -192,4 +183,29 @@ export function parseAndValidateCsv(csvText: string): CsvParseResult {
     questions,
     errors: [],
   };
+}
+
+export function parseAndValidateCsv(csvText: string): CsvParseResult {
+  const trimmedInput = csvText.replace(/^\uFEFF/, '').trim();
+  if (!trimmedInput) {
+    return {
+      ok: false,
+      questions: [],
+      errors: [{ row: 1, message: 'CSVファイルが空です。' }],
+    };
+  }
+
+  const parsed = Papa.parse<RawCsvRow>(trimmedInput, {
+    header: true,
+    skipEmptyLines: 'greedy',
+    transformHeader: (header) => header.trim(),
+  });
+
+  const headers = parsed.meta.fields ?? [];
+  const entries: RawQuestionRowEntry[] = parsed.data.map((data, index) => ({
+    rowNumber: index + 2, // 1-based row number including header row
+    data,
+  }));
+
+  return validateQuestionRows(headers, entries);
 }
