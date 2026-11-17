@@ -146,4 +146,64 @@ describe('Bolt 04 & 06: LoginPage', () => {
       await screen.findByText('パスキーの操作がキャンセルされたか、タイムアウトしました。'),
     ).toBeInTheDocument();
   });
+
+  it('displays shared quiz summary banner, passes redirectPath to signUp & Google OAuth, and supports cancel', async () => {
+    const user = userEvent.setup();
+    const baseAuthRepo = new LocalAuthRepository();
+    const quizRepo = new LocalQuizRepository();
+    const owner = await baseAuthRepo.signUp('banner-owner@example.com', 'password123');
+    const quiz = await quizRepo.create(owner.id, {
+      title: '線形代数まとめ',
+      questions: [
+        {
+          question: 'Q1',
+          choice1: 'A',
+          choice2: 'B',
+          choice3: null,
+          choice4: null,
+          answer: 1,
+          explanation: null,
+        },
+      ],
+    });
+    const share = await quizRepo.enableShare(quiz.id, owner.id);
+    await baseAuthRepo.signOut();
+
+    const signUpSpy = vi.fn(baseAuthRepo.signUp.bind(baseAuthRepo));
+    const signInWithGoogleSpy = vi.fn().mockResolvedValue(undefined);
+    const mockAuthRepo: AuthRepository = {
+      getCurrentUser: () => baseAuthRepo.getCurrentUser(),
+      signUp: signUpSpy,
+      signIn: (e, p) => baseAuthRepo.signIn(e, p),
+      signInWithGoogle: signInWithGoogleSpy,
+      signOut: () => baseAuthRepo.signOut(),
+    };
+
+    const sharePath = `/share/${share.token}`;
+    render(
+      <AppProvider authRepository={mockAuthRepo} quizRepository={quizRepo}>
+        <MemoryRouter initialEntries={[`/login?redirect=${encodeURIComponent(sharePath)}`]}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/share/:token" element={<div>Share Import Route</div>} />
+            <Route path="/" element={<div>Dashboard Home</div>} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText('線形代数まとめ')).toBeInTheDocument();
+    expect(screen.getByText(/全1問/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Googleでログイン/ }));
+    expect(signInWithGoogleSpy).toHaveBeenCalledWith(sharePath);
+
+    await user.click(screen.getByRole('button', { name: '新規登録はこちら' }));
+    await user.type(screen.getByLabelText('メールアドレス'), 'student@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'password123');
+    await user.click(screen.getByRole('button', { name: 'アカウント登録' }));
+
+    expect(signUpSpy).toHaveBeenCalledWith('student@example.com', 'password123', sharePath);
+    expect(await screen.findByText('Share Import Route')).toBeInTheDocument();
+  });
 });

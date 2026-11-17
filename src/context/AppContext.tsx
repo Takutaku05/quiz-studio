@@ -36,8 +36,8 @@ interface AppContextValue {
   authRepository: AuthRepository;
   quizRepository: QuizRepository;
   signIn: (email: string, password: string) => Promise<User>;
-  signUp: (email: string, password: string) => Promise<User>;
-  signInWithGoogle: () => Promise<void>;
+  signUp: (email: string, password: string, redirectPath?: string) => Promise<User>;
+  signInWithGoogle: (redirectPath?: string) => Promise<void>;
   signInWithPasskey: () => Promise<User>;
   signOut: () => Promise<void>;
 }
@@ -115,19 +115,22 @@ export function AppProvider({
   );
 
   const signUp = useCallback(
-    async (email: string, password: string) => {
+    async (email: string, password: string, redirectPath?: string) => {
       setAuthError(null);
-      const created = await authRepository.signUp(email, password);
+      const created = await authRepository.signUp(email, password, redirectPath);
       setUser(created);
       return created;
     },
     [authRepository],
   );
 
-  const signInWithGoogle = useCallback(async () => {
-    setAuthError(null);
-    await authRepository.signInWithGoogle();
-  }, [authRepository]);
+  const signInWithGoogle = useCallback(
+    async (redirectPath?: string) => {
+      setAuthError(null);
+      await authRepository.signInWithGoogle(redirectPath);
+    },
+    [authRepository],
+  );
 
   const signInWithPasskey = useCallback(async () => {
     setAuthError(null);

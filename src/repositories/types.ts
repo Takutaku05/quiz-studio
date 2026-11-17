@@ -1,4 +1,12 @@
-import type { ParsedQuestion, PasskeyCredential, Quiz, User } from '../domain/types';
+import type {
+  ImportSharedQuizResult,
+  ParsedQuestion,
+  PasskeyCredential,
+  Quiz,
+  QuizShare,
+  SharedQuizSummary,
+  User,
+} from '../domain/types';
 
 export interface CreateQuizInput {
   title: string;
@@ -7,9 +15,9 @@ export interface CreateQuizInput {
 
 export interface AuthRepository {
   getCurrentUser(): Promise<User | null>;
-  signUp(email: string, password: string): Promise<User>;
+  signUp(email: string, password: string, redirectPath?: string): Promise<User>;
   signIn(email: string, password: string): Promise<User>;
-  signInWithGoogle(): Promise<void>;
+  signInWithGoogle(redirectPath?: string): Promise<void>;
   signOut(): Promise<void>;
   onAuthStateChange?(callback: (user: User | null) => void): () => void;
   isPasskeySupported?(): boolean;
@@ -25,4 +33,10 @@ export interface QuizRepository {
   getById(quizId: string, userId: string): Promise<Quiz | null>;
   create(userId: string, input: CreateQuizInput): Promise<Quiz>;
   delete(quizId: string, userId: string): Promise<boolean>;
+  getShare?(quizId: string, userId: string): Promise<QuizShare | null>;
+  enableShare?(quizId: string, userId: string): Promise<QuizShare>;
+  disableShare?(quizId: string, userId: string): Promise<QuizShare>;
+  regenerateShare?(quizId: string, userId: string): Promise<QuizShare>;
+  getSharedQuizSummary?(token: string): Promise<SharedQuizSummary | null>;
+  importByShareToken?(token: string, userId: string): Promise<ImportSharedQuizResult>;
 }

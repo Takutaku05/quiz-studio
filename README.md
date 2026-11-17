@@ -8,7 +8,15 @@ VITE_SUPABASE_URL=https://<project-ref>.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_xxx
 ```
 
-DB スキーマは `supabase/migrations/` にあります（`quizzes` / `questions` テーブル、本人のみアクセス可能な RLS、問題集を一括作成する `create_quiz_with_questions` 関数）。
+DB スキーマは `supabase/migrations/` にあります（`quizzes` / `questions` テーブル、本人のみアクセス可能な RLS、問題集を一括作成する `create_quiz_with_questions` 関数、URL / QR コード共有用の `quiz_shares` / `quiz_share_imports` テーブルおよび `enable_quiz_share` / `disable_quiz_share` / `regenerate_quiz_share` / `get_shared_quiz_summary` / `import_shared_quiz` 関数）。
+
+共有機能を使う場合は、`supabase/migrations/20261117000000_create_quiz_shares.sql` を Supabase Dashboard の SQL Editor 等から適用してください。
+
+### 問題集のURL / QRコード共有
+
+1. ダッシュボードの各問題集カードの「共有」ボタンから、共有URLとQRコードを表示できます。
+2. 相手が共有URLを開くかQRコードを読み取ると、未ログイン時はログイン／アカウント登録画面へ案内され、認証完了後に問題集のコピーが相手のアカウントへ自動インポートされます。
+3. 共有モーダルから「リンクを再発行」または「共有を停止」を行うことで、既存のリンク・QRコードを無効化できます。
 
 ### Google OAuth ログイン設定
 

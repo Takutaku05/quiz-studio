@@ -174,4 +174,65 @@ describe('Bolt 04: DashboardPage', () => {
     downloadXlsxSpy.mockRestore();
     downloadCsvSpy.mockRestore();
   });
+
+  it('opens ShareQuizModal from quiz card and shows/dismisses importNotice banner', async () => {
+    const user = userEvent.setup();
+    const authRepo = new LocalAuthRepository();
+    const quizRepo = new LocalQuizRepository();
+    const currentUser = await authRepo.signUp('dash-share@example.com', 'password123');
+    const created = await quizRepo.create(currentUser.id, {
+      title: '共有する問題集',
+      questions: [
+        {
+          question: '1+1は？',
+          choice1: '2',
+          choice2: '3',
+          choice3: null,
+          choice4: null,
+          answer: 1,
+          explanation: null,
+        },
+      ],
+    });
+
+    render(
+      <AppProvider authRepository={authRepo} quizRepository={quizRepo}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/',
+              state: {
+                importNotice: {
+                  quizId: created.id,
+                  title: created.title,
+                  questionCount: 1,
+                  status: 'imported',
+                },
+              },
+            },
+          ]}
+        >
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/quiz/:quizId" element={<div>Quiz Play Screen</div>} />
+            <Route path="/login" element={<div>Login Screen</div>} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+
+    expect(
+      await screen.findByText('「共有する問題集」（1問）をマイ問題集にインポートしました。'),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '通知を閉じる' }));
+    expect(
+      screen.queryByText('「共有する問題集」（1問）をマイ問題集にインポートしました。'),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '共有' }));
+    expect(await screen.findByRole('heading', { name: '問題集を共有' })).toBeInTheDocument();
+    expect(await screen.findByLabelText('共有URL')).toBeInTheDocument();
+    expect(await screen.findByAltText('共有する問題集 の共有QRコード')).toBeInTheDocument();
+  });
 });

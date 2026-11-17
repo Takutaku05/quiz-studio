@@ -1,7 +1,15 @@
-import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { BookOpenCheck, KeyRound } from 'lucide-react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { BookOpenCheck, KeyRound, Share2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import type { SharedQuizSummary } from '../domain/types';
+import {
+  buildSharePath,
+  clearPendingShareToken,
+  resolvePendingShareToken,
+  resolvePostAuthRedirect,
+  savePendingShareToken,
+} from '../lib/shareRedirect';
 
 function GoogleIcon() {
   return (
@@ -27,8 +35,16 @@ function GoogleIcon() {
 }
 
 export function LoginPage() {
-  const { signIn, signUp, signInWithGoogle, signInWithPasskey, authError, clearAuthError } =
-    useApp();
+  const {
+    signIn,
+    signUp,
+    signInWithGoogle,
+    signInWithPasskey,
+    quizRepository,
+    authError,
+    clearAuthError,
+  } = useApp();
+  const location = useLocation();
   const navigate = useNavigate();
 
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
@@ -38,9 +54,56 @@ export function LoginPage() {
   const [pendingMethod, setPendingMethod] = useState<'password' | 'google' | 'passkey' | null>(
     null,
   );
+  const [sharedSummary, setSharedSummary] = useState<SharedQuizSummary | null>(null);
+  const [summaryLoaded, setSummaryLoaded] = useState(false);
+
+  const pendingShareToken = resolvePendingShareToken(location.search);
+  const redirectTarget = resolvePostAuthRedirect(location.search);
+  const shareRedirectPath = pendingShareToken ? buildSharePath(pendingShareToken) : undefined;
+
+  useEffect(() => {
+    if (!pendingShareToken) {
+      setSharedSummary(null);
+      setSummaryLoaded(false);
+      return;
+    }
+
+    savePendingShareToken(pendingShareToken);
+
+    let active = true;
+    setSummaryLoaded(false);
+    if (!quizRepository.getSharedQuizSummary) {
+      setSummaryLoaded(true);
+      return;
+    }
+
+    quizRepository
+      .getSharedQuizSummary(pendingShareToken)
+      .then((summary) => {
+        if (!active) return;
+        setSharedSummary(summary);
+        setSummaryLoaded(true);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSharedSummary(null);
+        setSummaryLoaded(true);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [pendingShareToken, quizRepository]);
 
   const submitting = pendingMethod !== null;
   const displayError = error ?? authError;
+
+  const handleCancelShare = () => {
+    clearPendingShareToken();
+    setSharedSummary(null);
+    setSummaryLoaded(false);
+    navigate('/login', { replace: true });
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -50,10 +113,12 @@ export function LoginPage() {
     try {
       if (mode === 'signin') {
         await signIn(email, password);
+      } else if (shareRedirectPath) {
+        await signUp(email, password, shareRedirectPath);
       } else {
         await signUp(email, password);
       }
-      navigate('/', { replace: true });
+      navigate(redirectTarget, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : '認証に失敗しました。');
     } finally {
@@ -66,7 +131,11 @@ export function LoginPage() {
     clearAuthError();
     setPendingMethod('google');
     try {
-      await signInWithGoogle();
+      if (shareRedirectPath) {
+        await signInWithGoogle(shareRedirectPath);
+      } else {
+        await signInWithGoogle();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google認証に失敗しました。');
     } finally {
@@ -80,7 +149,7 @@ export function LoginPage() {
     setPendingMethod('passkey');
     try {
       await signInWithPasskey();
-      navigate('/', { replace: true });
+      navigate(redirectTarget, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'パスキー認証に失敗しました。');
     } finally {
@@ -102,6 +171,36 @@ export function LoginPage() {
               : '新しいアカウントを作成して問題集を管理'}
           </p>
         </div>
+
+        {pendingShareToken && (
+          <div className="mb-5 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs sm:text-sm text-indigo-900 space-y-2">
+            <div className="flex items-start gap-2">
+              <Share2 className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                {!summaryLoaded ? (
+                  <p>共有された問題集を確認しています...</p>
+                ) : sharedSummary ? (
+                  <p>
+                    「<span className="font-semibold">{sharedSummary.title}</span>」（全
+                    {sharedSummary.questionCount}
+                    問）が共有されています。ログインまたは新規登録すると自動でインポートされます。
+                  </p>
+                ) : (
+                  <p className="text-rose-700">
+                    この共有リンクは無効か、共有が停止されています。
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleCancelShare}
+              className="text-xs font-medium text-indigo-700 hover:text-indigo-900 underline underline-offset-2 cursor-pointer"
+            >
+              共有をキャンセルして通常ログイン
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
