@@ -19,14 +19,23 @@ import { ShareQuizModal } from '../components/ShareQuizModal';
 import { useApp } from '../context/AppContext';
 import { downloadCsvTemplate } from '../domain/csvTemplate';
 import { downloadXlsxTemplate } from '../domain/xlsxTemplate';
-import type { ImportSharedQuizResult, ParsedQuestion, Quiz } from '../domain/types';
+import type {
+  ImportSharedQuizResult,
+  ParsedQuestion,
+  QuestionStat,
+  Quiz,
+  QuizSession,
+} from '../domain/types';
+import { QuizStudyBadges } from '../components/QuizStudyBadges';
 
 export function DashboardPage() {
-  const { user, authRepository, quizRepository, signOut } = useApp();
+  const { user, authRepository, quizRepository, studyRepository, signOut } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
 
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+  const [sessionsByQuiz, setSessionsByQuiz] = useState<Map<string, QuizSession>>(new Map());
+  const [statsByQuiz, setStatsByQuiz] = useState<Map<string, QuestionStat[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isPasskeyOpen, setIsPasskeyOpen] = useState(false);
@@ -60,6 +69,26 @@ export function DashboardPage() {
   useEffect(() => {
     loadQuizzes();
   }, [loadQuizzes]);
+
+  // Study status is secondary: if it cannot be loaded, the list still shows without badges.
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    Promise.all([studyRepository.listSessions(user.id), studyRepository.listStats(user.id)])
+      .then(([sessions, stats]) => {
+        if (!active) return;
+        setSessionsByQuiz(new Map(sessions.map((s) => [s.quizId, s])));
+        const grouped = new Map<string, QuestionStat[]>();
+        for (const stat of stats) {
+          grouped.set(stat.quizId, [...(grouped.get(stat.quizId) ?? []), stat]);
+        }
+        setStatsByQuiz(grouped);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [quizzes, studyRepository, user]);
 
   const handleUploadSave = async (title: string, questions: ParsedQuestion[]) => {
     if (!user) return;
@@ -260,6 +289,10 @@ export function DashboardPage() {
                       </span>
                       <span>作成日: {createdDate}</span>
                     </div>
+                    <QuizStudyBadges
+                      session={sessionsByQuiz.get(quiz.id) ?? null}
+                      stats={statsByQuiz.get(quiz.id) ?? []}
+                    />
                   </div>
 
                   <div className="flex items-center gap-2 pt-2 border-t border-slate-100">

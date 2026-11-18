@@ -1,6 +1,6 @@
 # 要件定義書（System Requirements Document）
 
-> 最終更新: 2026-11-17（Excel取込・テンプレート、URL / QRコード共有、Google OAuth、パスキー認証を反映）
+> 最終更新: 2026-11-18（学習履歴・苦手復習、途中再開を反映。詳細は `docs/requirements-review-and-resume.md`）
 
 ## 1. システムアーキテクチャ構成
 
@@ -44,6 +44,8 @@
    * 「＋ 新規アップロード」ボタン、「テンプレートExcel」「テンプレートCSV」ダウンロードボタン。
 
    * 問題集が0件のときは空状態メッセージ、テンプレートのダウンロード導線、「最初の問題集をアップロード」ボタンを表示する。
+
+   * 各カードに、中断中のセッションがあれば `進行中 (3 / 20問)`、回答済みの問題があれば `苦手（正答率60%以下）: ◯問` を表示する（問題集全体の正答率は表示しない）。
 
    * 共有リンクからのインポート直後は結果通知（インポート完了 / インポート済み / 自分の問題集）と「今すぐプレイ」（または「問題集を開く」）リンクを表示する。
 
@@ -95,7 +97,7 @@
 
    * 画面内の状態（フェーズ）を以下の3つで切り替える。
 
-     * **① 設定フェーズ：** 出題モード（一問一答 / テスト）、問題順シャッフル（ON/OFF）、選択肢シャッフル（ON/OFF）を選択して「スタート」。
+     * **① 設定フェーズ：** 出題対象（すべての問題 / 直近で間違えた問題 / 正答率60%以下の問題。該当件数を表示し0件は選択不可）、出題モード（一問一答 / テスト）、問題順シャッフル（ON/OFF）、選択肢シャッフル（ON/OFF）を選択して「スタート」。中断中のセッションがある場合は最上部に「中断中のセッションがあります」カードと「続きから再開する」ボタンを表示する。「スタート」を押すと中断中のセッションは確認なしで破棄される。
 
      * **② 出題フェーズ：** 進捗バー（例：`3 / 20`）、問題文、選択肢ボタン（2〜4個）、解説表示エリア（一問一答の回答後のみ）、次へボタン。
 
@@ -246,6 +248,8 @@ CSV・Excel（`.xlsx`）のどちらも、同じ列定義・同じバリデー�
 | `questions` | `id`, `quiz_id`, `order_index`, `question`, `choice1`〜`choice4`, `answer`, `explanation` | 問題 |
 | `quiz_shares` | `id`, `quiz_id`（一意）, `owner_id`, `token`（一意）, `is_active`, `created_at`, `updated_at` | 問題集ごとの共有設定（1問題集につき1件） |
 | `quiz_share_imports` | `id`, `share_id`, `recipient_user_id`, `imported_quiz_id`, `imported_at`（`share_id` と `recipient_user_id` の組で一意） | 共有ごとのインポート履歴 |
+| `question_stats` | `user_id`, `quiz_id`, `question_id`, `attempts_count`, `correct_count`, `last_is_correct`, `last_answered_at`（`user_id` と `question_id` の組が主キー） | 問題ごとの累積成績 |
+| `quiz_sessions` | `user_id`, `quiz_id`, `mode`, `target_filter`, `shuffle_questions`, `shuffle_choices`, `question_ids`, `choices_order`, `answers`, `current_index`, `updated_at`（`user_id` と `quiz_id` の組が主キー） | 問題集ごとの中断セッション（1件） |
 
 #### アクセス制御（RLS）
 
@@ -253,6 +257,7 @@ CSV・Excel（`.xlsx`）のどちらも、同じ列定義・同じバリデー�
 * `questions`：自分の問題集に属するもののみ参照・作成できる（削除は問題集の削除に連動）。
 * `quiz_shares`：本人（`owner_id`）のみ参照・作成・更新・削除できる。作成・更新は自分の問題集に対してのみ。
 * `quiz_share_imports`：受け取ったユーザー本人のみ参照できる。
+* `question_stats` / `quiz_sessions`：本人のみ参照・作成・更新・削除できる。作成・更新は自分の問題集（`question_stats` は加えてその問題集に属する問題）に対してのみ。
 
 #### DB関数
 
@@ -262,3 +267,4 @@ CSV・Excel（`.xlsx`）のどちらも、同じ列定義・同じバリデー�
 | `enable_quiz_share` / `disable_quiz_share` / `regenerate_quiz_share` | ログインユーザー（自分の問題集のみ） | 共有の有効化・停止・トークン再発行 |
 | `get_shared_quiz_summary` | 未ログイン含む全員 | 有効なトークンから問題集のタイトルと問題数のみを返す（問題本文は返さない） |
 | `import_shared_quiz` | ログインユーザー | 共有問題集を呼び出したユーザーのアカウントへコピーする |
+| `record_question_answer` | ログインユーザー（自分の問題のみ） | 1問の正誤を累積成績に加算する |

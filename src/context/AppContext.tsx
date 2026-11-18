@@ -17,7 +17,9 @@ import {
   SupabaseQuizRepository,
   consumeAuthRedirectError,
 } from '../repositories/supabaseRepositories';
-import type { AuthRepository, QuizRepository } from '../repositories/types';
+import { LocalStudyRepository } from '../repositories/localStudyRepository';
+import { SupabaseStudyRepository } from '../repositories/supabaseStudyRepository';
+import type { AuthRepository, QuizRepository, StudyRepository } from '../repositories/types';
 import { supabase } from '../lib/supabaseClient';
 
 function createDefaultAuthRepository(): AuthRepository {
@@ -28,6 +30,10 @@ function createDefaultQuizRepository(): QuizRepository {
   return supabase ? new SupabaseQuizRepository(supabase) : new LocalQuizRepository();
 }
 
+function createDefaultStudyRepository(): StudyRepository {
+  return supabase ? new SupabaseStudyRepository(supabase) : new LocalStudyRepository();
+}
+
 interface AppContextValue {
   user: User | null;
   authLoading: boolean;
@@ -35,6 +41,7 @@ interface AppContextValue {
   clearAuthError: () => void;
   authRepository: AuthRepository;
   quizRepository: QuizRepository;
+  studyRepository: StudyRepository;
   signIn: (email: string, password: string) => Promise<User>;
   signUp: (email: string, password: string, redirectPath?: string) => Promise<User>;
   signInWithGoogle: (redirectPath?: string) => Promise<void>;
@@ -48,12 +55,14 @@ interface AppProviderProps {
   children: ReactNode;
   authRepository?: AuthRepository;
   quizRepository?: QuizRepository;
+  studyRepository?: StudyRepository;
 }
 
 export function AppProvider({
   children,
   authRepository: customAuthRepo,
   quizRepository: customQuizRepo,
+  studyRepository: customStudyRepo,
 }: AppProviderProps) {
   const authRepository = useMemo(
     () => customAuthRepo ?? createDefaultAuthRepository(),
@@ -62,6 +71,10 @@ export function AppProvider({
   const quizRepository = useMemo(
     () => customQuizRepo ?? createDefaultQuizRepository(),
     [customQuizRepo],
+  );
+  const studyRepository = useMemo(
+    () => customStudyRepo ?? createDefaultStudyRepository(),
+    [customStudyRepo],
   );
 
   const [user, setUser] = useState<User | null>(null);
@@ -156,6 +169,7 @@ export function AppProvider({
       clearAuthError,
       authRepository,
       quizRepository,
+      studyRepository,
       signIn,
       signUp,
       signInWithGoogle,
@@ -169,6 +183,7 @@ export function AppProvider({
       clearAuthError,
       authRepository,
       quizRepository,
+      studyRepository,
       signIn,
       signUp,
       signInWithGoogle,

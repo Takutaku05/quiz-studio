@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
+  AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   Play,
@@ -8,6 +9,8 @@ import {
   Shuffle,
   XCircle,
 } from 'lucide-react';
+import { ResumeSessionCard } from '../components/ResumeSessionCard';
+import { ReviewFilterSelector } from '../components/ReviewFilterSelector';
 import { useApp } from '../context/AppContext';
 import {
   calculateQuizResult,
@@ -16,57 +19,180 @@ import {
   type PreparedChoice,
   type PreparedQuestion,
 } from '../domain/quizEngine';
-import type { AnswerNumber, Question, Quiz, QuizMode } from '../domain/types';
+import { restorePreparedQuestions, toSessionSnapshot } from '../domain/quizSession';
+import {
+  countReviewTargets,
+  filterQuestionsByReview,
+  type StatsBasedFilter,
+} from '../domain/studyFilters';
+import type {
+  AnswerNumber,
+  Question,
+  QuestionStat,
+  Quiz,
+  QuizMode,
+  QuizSession,
+  ReviewFilter,
+} from '../domain/types';
 
 type PlayPhase = 'setup' | 'playing' | 'result';
 
+interface ActiveSessionSettings {
+  mode: QuizMode;
+  targetFilter: ReviewFilter;
+  shuffleQuestions: boolean;
+  shuffleChoices: boolean;
+}
+
 export function QuizPlayPage() {
   const { quizId } = useParams<{ quizId: string }>();
-  const { user, quizRepository } = useApp();
+  const { user, quizRepository, studyRepository } = useApp();
   const navigate = useNavigate();
+  const userId = user?.id;
 
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<QuestionStat[]>([]);
+  const [pendingSession, setPendingSession] = useState<QuizSession | null>(null);
+  const [saveFailed, setSaveFailed] = useState(false);
 
   // Setup state
   const [phase, setPhase] = useState<PlayPhase>('setup');
   const [mode, setMode] = useState<QuizMode>('one_by_one');
   const [shuffleQuestions, setShuffleQuestions] = useState(false);
   const [shuffleChoices, setShuffleChoices] = useState(false);
+  const [reviewFilter, setReviewFilter] = useState<StatsBasedFilter>('all');
 
   // Playing state
   const [preparedQuestions, setPreparedQuestions] = useState<PreparedQuestion[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, AnswerNumber>>({});
+  const [activeSettings, setActiveSettings] = useState<ActiveSessionSettings | null>(null);
+
+  // Session writes are chained so that a slow earlier save can never overwrite a later one,
+  // and the final delete always runs after every pending save.
+  const sessionWriteQueue = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     let active = true;
     async function load() {
-      if (!user || !quizId) {
+      if (!userId || !quizId) {
         if (active) setLoading(false);
         return;
       }
       setLoading(true);
-      const found = await quizRepository.getById(quizId, user.id);
-      if (active) {
-        setQuiz(found);
-        setLoading(false);
+      const [found, loadedStats, loadedSession] = await Promise.all([
+        quizRepository.getById(quizId, userId),
+        studyRepository.listStats(userId, quizId).catch(() => [] as QuestionStat[]),
+        studyRepository.getSession(userId, quizId).catch(() => null),
+      ]);
+      if (!active) return;
+
+      let resumable = loadedSession;
+      if (found && loadedSession && !restorePreparedQuestions(found.questions, loadedSession)) {
+        resumable = null;
+        studyRepository.deleteSession(userId, quizId).catch(() => undefined);
       }
+      setQuiz(found);
+      setStats(loadedStats);
+      setPendingSession(found ? resumable : null);
+      setLoading(false);
     }
     load();
     return () => {
       active = false;
     };
-  }, [quizId, quizRepository, user]);
+  }, [quizId, quizRepository, studyRepository, userId]);
 
-  const startSession = (sourceQuestions: readonly Question[]) => {
+  const reviewCounts = useMemo(
+    () => countReviewTargets(quiz?.questions ?? [], stats),
+    [quiz, stats],
+  );
+
+  const enqueueSessionWrite = useCallback((write: () => Promise<void>) => {
+    sessionWriteQueue.current = sessionWriteQueue.current
+      .then(write)
+      .catch(() => setSaveFailed(true));
+  }, []);
+
+  const persistSession = (
+    settings: ActiveSessionSettings,
+    prepared: readonly PreparedQuestion[],
+    nextAnswers: Record<string, AnswerNumber>,
+    nextIndex: number,
+  ) => {
+    if (!userId || !quiz) return;
+    const quizIdToSave = quiz.id;
+    enqueueSessionWrite(() =>
+      studyRepository.saveSession(userId, {
+        quizId: quizIdToSave,
+        ...settings,
+        ...toSessionSnapshot(prepared),
+        answers: nextAnswers,
+        currentIndex: nextIndex,
+      }),
+    );
+  };
+
+  const recordAnswer = (question: Question, selected: AnswerNumber) => {
+    if (!userId) return;
+    studyRepository
+      .recordAnswer(userId, {
+        quizId: question.quizId,
+        questionId: question.id,
+        isCorrect: selected === question.answer,
+      })
+      .catch(() => setSaveFailed(true));
+  };
+
+  const finishSession = () => {
+    setPhase('result');
+    if (!userId || !quiz) return;
+    const quizIdToDelete = quiz.id;
+    enqueueSessionWrite(() => studyRepository.deleteSession(userId, quizIdToDelete));
+  };
+
+  const startSession = (sourceQuestions: readonly Question[], targetFilter: ReviewFilter) => {
     const prepared = prepareQuizQuestions(sourceQuestions, {
       shuffleQuestions,
       shuffleChoices,
     });
+    const settings: ActiveSessionSettings = { mode, targetFilter, shuffleQuestions, shuffleChoices };
     setPreparedQuestions(prepared);
     setCurrentIndex(0);
     setAnswers({});
+    setActiveSettings(settings);
+    setPendingSession(null);
+    setPhase('playing');
+    // Starting anew overwrites any interrupted session without asking.
+    persistSession(settings, prepared, {}, 0);
+  };
+
+  const resumeSession = () => {
+    if (!quiz || !pendingSession) return;
+    const restored = restorePreparedQuestions(quiz.questions, pendingSession);
+    if (!restored) {
+      setPendingSession(null);
+      return;
+    }
+    setMode(pendingSession.mode);
+    setShuffleQuestions(pendingSession.shuffleQuestions);
+    setShuffleChoices(pendingSession.shuffleChoices);
+    setActiveSettings({
+      mode: pendingSession.mode,
+      targetFilter: pendingSession.targetFilter,
+      shuffleQuestions: pendingSession.shuffleQuestions,
+      shuffleChoices: pendingSession.shuffleChoices,
+    });
+    setPreparedQuestions(restored);
+    setAnswers(pendingSession.answers);
+    setPendingSession(null);
+    if (pendingSession.currentIndex >= restored.length) {
+      setCurrentIndex(restored.length - 1);
+      finishSession();
+      return;
+    }
+    setCurrentIndex(pendingSession.currentIndex);
     setPhase('playing');
   };
 
@@ -115,17 +241,29 @@ export function QuizPlayPage() {
   const handleSelectChoice = (choice: PreparedChoice) => {
     if (!currentQuestion) return;
     if (mode === 'one_by_one' && hasAnsweredCurrent) return;
-    setAnswers((prev) => ({
-      ...prev,
+    const nextAnswers = {
+      ...answers,
       [currentQuestion.source.id]: choice.originalNumber,
-    }));
+    };
+    setAnswers(nextAnswers);
+
+    // One-by-one: the answer is final the moment it is picked.
+    if (mode === 'one_by_one' && activeSettings) {
+      recordAnswer(currentQuestion.source, choice.originalNumber);
+      persistSession(activeSettings, preparedQuestions, nextAnswers, currentIndex + 1);
+    }
   };
 
   const handleNext = () => {
+    // Test mode: the answer becomes final when moving on.
+    if (mode === 'test' && currentQuestion && selectedAnswer !== undefined && activeSettings) {
+      recordAnswer(currentQuestion.source, selectedAnswer);
+      persistSession(activeSettings, preparedQuestions, answers, currentIndex + 1);
+    }
     if (currentIndex + 1 < preparedQuestions.length) {
       setCurrentIndex((prev) => prev + 1);
     } else {
-      setPhase('result');
+      finishSession();
     }
   };
 
@@ -149,14 +287,34 @@ export function QuizPlayPage() {
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-6 sm:py-8">
+        {saveFailed && (
+          <p
+            role="status"
+            className="mb-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+          >
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>学習記録を保存できませんでした</span>
+          </p>
+        )}
+
         {phase === 'setup' && (
           <section className="bg-white rounded-2xl border border-slate-200 p-6 space-y-6 shadow-xs">
+            {pendingSession && (
+              <ResumeSessionCard session={pendingSession} onResume={resumeSession} />
+            )}
+
             <div>
               <h2 className="text-xl font-bold text-slate-900">{quiz.title}</h2>
               <p className="text-sm text-slate-500 mt-1">
                 全 {quiz.questions.length} 問・出題設定を選んでスタートしてください
               </p>
             </div>
+
+            <ReviewFilterSelector
+              value={reviewFilter}
+              counts={reviewCounts}
+              onChange={setReviewFilter}
+            />
 
             <div className="space-y-3">
               <p className="text-sm font-semibold text-slate-700">出題モード</p>
@@ -250,7 +408,9 @@ export function QuizPlayPage() {
 
             <button
               type="button"
-              onClick={() => startSession(quiz.questions)}
+              onClick={() =>
+                startSession(filterQuestionsByReview(quiz.questions, stats, reviewFilter), reviewFilter)
+              }
               className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 transition-colors cursor-pointer"
             >
               <Play className="w-4 h-4" />
@@ -280,7 +440,10 @@ export function QuizPlayPage() {
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 space-y-5 shadow-xs">
+            <div
+              data-testid="question-card"
+              className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 space-y-5 shadow-xs"
+            >
               <p className="text-base sm:text-lg font-bold text-slate-900 whitespace-pre-wrap leading-relaxed">
                 {currentQuestion.source.question}
               </p>
@@ -374,7 +537,7 @@ export function QuizPlayPage() {
               <div className="flex flex-col sm:flex-row gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => startSession(quiz.questions)}
+                  onClick={() => startSession(quiz.questions, 'all')}
                   className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-3 px-4 cursor-pointer"
                 >
                   <RotateCcw className="w-4 h-4" />
@@ -384,7 +547,7 @@ export function QuizPlayPage() {
                 {wrongQuestions.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => startSession(wrongQuestions)}
+                    onClick={() => startSession(wrongQuestions, 'retry_wrong')}
                     className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold py-3 px-4 cursor-pointer"
                   >
                     <RotateCcw className="w-4 h-4" />

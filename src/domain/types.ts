@@ -67,3 +67,32 @@ export interface ImportSharedQuizResult {
   questionCount: number;
   status: ImportSharedQuizStatus;
 }
+
+export type ReviewFilter = 'all' | 'recent_wrong' | 'low_accuracy' | 'retry_wrong';
+
+export interface QuestionStat {
+  quizId: string;
+  questionId: string;
+  attemptsCount: number;
+  correctCount: number;
+  lastIsCorrect: boolean;
+  lastAnsweredAt: string;
+}
+
+export interface QuizSession {
+  quizId: string;
+  mode: QuizMode;
+  targetFilter: ReviewFilter;
+  shuffleQuestions: boolean;
+  shuffleChoices: boolean;
+  /** 出題順の問題ID */
+  questionIds: string[];
+  /** 問題IDごとの表示順の選択肢番号（originalNumber） */
+  choicesOrder: Record<string, AnswerNumber[]>;
+  answers: Record<string, AnswerNumber>;
+  /** 次に出題する位置（= 回答済みの問題数） */
+  currentIndex: number;
+  updatedAt: string;
+}
+
+export type SaveQuizSessionInput = Omit<QuizSession, 'updatedAt'>;
