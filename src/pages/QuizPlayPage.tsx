@@ -7,6 +7,7 @@ import {
   Play,
   RotateCcw,
   Shuffle,
+  SkipForward,
   XCircle,
 } from 'lucide-react';
 import { ResumeSessionCard } from '../components/ResumeSessionCard';
@@ -68,6 +69,8 @@ export function QuizPlayPage() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, AnswerNumber>>({});
   const [activeSettings, setActiveSettings] = useState<ActiveSessionSettings | null>(null);
+  // One-by-one: the current question was skipped, so its answer is revealed without a pick.
+  const [skippedCurrent, setSkippedCurrent] = useState(false);
 
   // Session writes are chained so that a slow earlier save can never overwrite a later one,
   // and the final delete always runs after every pending save.
@@ -134,13 +137,13 @@ export function QuizPlayPage() {
     );
   };
 
-  const recordAnswer = (question: Question, selected: AnswerNumber) => {
+  const recordAnswer = (question: Question, isCorrect: boolean) => {
     if (!userId) return;
     studyRepository
       .recordAnswer(userId, {
         quizId: question.quizId,
         questionId: question.id,
-        isCorrect: selected === question.answer,
+        isCorrect,
       })
       .catch(() => setSaveFailed(true));
   };
@@ -161,6 +164,7 @@ export function QuizPlayPage() {
     setPreparedQuestions(prepared);
     setCurrentIndex(0);
     setAnswers({});
+    setSkippedCurrent(false);
     setActiveSettings(settings);
     setPendingSession(null);
     setPhase('playing');
@@ -186,6 +190,7 @@ export function QuizPlayPage() {
     });
     setPreparedQuestions(restored);
     setAnswers(pendingSession.answers);
+    setSkippedCurrent(false);
     setPendingSession(null);
     if (pendingSession.currentIndex >= restored.length) {
       setCurrentIndex(restored.length - 1);
@@ -201,6 +206,7 @@ export function QuizPlayPage() {
     ? answers[currentQuestion.source.id]
     : undefined;
   const hasAnsweredCurrent = selectedAnswer !== undefined;
+  const isRevealed = mode === 'one_by_one' && (hasAnsweredCurrent || skippedCurrent);
 
   const result = useMemo(() => {
     if (phase !== 'result') return null;
@@ -240,7 +246,7 @@ export function QuizPlayPage() {
 
   const handleSelectChoice = (choice: PreparedChoice) => {
     if (!currentQuestion) return;
-    if (mode === 'one_by_one' && hasAnsweredCurrent) return;
+    if (isRevealed) return;
     const nextAnswers = {
       ...answers,
       [currentQuestion.source.id]: choice.originalNumber,
@@ -249,22 +255,43 @@ export function QuizPlayPage() {
 
     // One-by-one: the answer is final the moment it is picked.
     if (mode === 'one_by_one' && activeSettings) {
-      recordAnswer(currentQuestion.source, choice.originalNumber);
+      recordAnswer(currentQuestion.source, choice.isCorrect);
       persistSession(activeSettings, preparedQuestions, nextAnswers, currentIndex + 1);
+    }
+  };
+
+  const goToNextQuestion = () => {
+    setSkippedCurrent(false);
+    if (currentIndex + 1 < preparedQuestions.length) {
+      setCurrentIndex((prev) => prev + 1);
+    } else {
+      finishSession();
     }
   };
 
   const handleNext = () => {
     // Test mode: the answer becomes final when moving on.
     if (mode === 'test' && currentQuestion && selectedAnswer !== undefined && activeSettings) {
-      recordAnswer(currentQuestion.source, selectedAnswer);
+      recordAnswer(currentQuestion.source, selectedAnswer === currentQuestion.source.answer);
       persistSession(activeSettings, preparedQuestions, answers, currentIndex + 1);
     }
-    if (currentIndex + 1 < preparedQuestions.length) {
-      setCurrentIndex((prev) => prev + 1);
-    } else {
-      finishSession();
+    goToNextQuestion();
+  };
+
+  // Skipping means "I don't know": it is recorded as a wrong answer so a lucky guess
+  // never counts as mastered, and the question stays a review target.
+  const handleSkip = () => {
+    if (!currentQuestion || !activeSettings || isRevealed) return;
+    const { [currentQuestion.source.id]: _discarded, ...nextAnswers } = answers;
+    setAnswers(nextAnswers);
+    recordAnswer(currentQuestion.source, false);
+    persistSession(activeSettings, preparedQuestions, nextAnswers, currentIndex + 1);
+
+    if (mode === 'one_by_one') {
+      setSkippedCurrent(true);
+      return;
     }
+    goToNextQuestion();
   };
 
   return (
@@ -454,7 +481,7 @@ export function QuizPlayPage() {
                   let buttonStyle =
                     'border-slate-200 bg-white text-slate-800 hover:border-indigo-300 hover:bg-indigo-50/40';
 
-                  if (mode === 'one_by_one' && hasAnsweredCurrent) {
+                  if (isRevealed) {
                     if (choice.isCorrect) {
                       buttonStyle =
                         'border-emerald-500 bg-emerald-50 text-emerald-900 font-semibold';
@@ -473,7 +500,7 @@ export function QuizPlayPage() {
                     <button
                       key={choice.originalNumber}
                       type="button"
-                      disabled={mode === 'one_by_one' && hasAnsweredCurrent}
+                      disabled={isRevealed}
                       onClick={() => handleSelectChoice(choice)}
                       className={`w-full text-left rounded-xl border px-4 py-4 text-sm sm:text-base transition-colors cursor-pointer disabled:cursor-default ${buttonStyle}`}
                     >
@@ -483,9 +510,14 @@ export function QuizPlayPage() {
                 })}
               </div>
 
-              {mode === 'one_by_one' && hasAnsweredCurrent && (
+              {isRevealed && (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
-                  {currentQuestion.choices.find(
+                  {skippedCurrent ? (
+                    <div className="flex items-center gap-2 text-amber-700 font-bold">
+                      <SkipForward className="w-5 h-5" />
+                      <span>スキップしました（不正解として記録）</span>
+                    </div>
+                  ) : currentQuestion.choices.find(
                     (c) => c.originalNumber === selectedAnswer,
                   )?.isCorrect ? (
                     <div className="flex items-center gap-2 text-emerald-700 font-bold">
@@ -506,7 +538,7 @@ export function QuizPlayPage() {
                 </div>
               )}
 
-              {hasAnsweredCurrent && (
+              {(hasAnsweredCurrent || skippedCurrent) && (
                 <button
                   type="button"
                   onClick={handleNext}
@@ -515,6 +547,17 @@ export function QuizPlayPage() {
                   {currentIndex + 1 < preparedQuestions.length
                     ? '次へ'
                     : '結果を見る'}
+                </button>
+              )}
+
+              {!isRevealed && (
+                <button
+                  type="button"
+                  onClick={handleSkip}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 text-sm font-semibold py-3 transition-colors cursor-pointer"
+                >
+                  <SkipForward className="w-4 h-4" />
+                  <span>スキップ</span>
                 </button>
               )}
             </div>
@@ -580,10 +623,12 @@ export function QuizPlayPage() {
                       className={`shrink-0 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
                         item.isCorrect
                           ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-rose-50 text-rose-700'
+                          : item.selectedNumber === null
+                            ? 'bg-amber-50 text-amber-700'
+                            : 'bg-rose-50 text-rose-700'
                       }`}
                     >
-                      {item.isCorrect ? '正解' : '不正解'}
+                      {item.isCorrect ? '正解' : item.selectedNumber === null ? 'スキップ' : '不正解'}
                     </span>
                   </div>
 

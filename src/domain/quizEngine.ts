@@ -96,7 +96,7 @@ export function calculateQuizResult(
       questionId: item.source.id,
       questionText: item.source.question,
       selectedNumber: (selectedNum as AnswerNumber | null) ?? null,
-      selectedText: selectedChoice?.text ?? '未回答',
+      selectedText: selectedChoice?.text ?? 'スキップ（未回答）',
       correctText: correctChoice?.text ?? '',
       isCorrect,
       explanation: item.source.explanation,
