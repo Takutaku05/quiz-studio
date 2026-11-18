@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,7 @@ import * as csvTemplate from '../domain/csvTemplate';
 import { XLSX_MIME_TYPE } from '../domain/xlsxParser';
 import * as xlsxTemplate from '../domain/xlsxTemplate';
 import { LocalAuthRepository, LocalQuizRepository } from '../repositories/localStorageRepositories';
+import { LocalStudyRepository } from '../repositories/localStudyRepository';
 import { DashboardPage } from './DashboardPage';
 
 describe('Bolt 04: DashboardPage', () => {
@@ -234,5 +235,49 @@ describe('Bolt 04: DashboardPage', () => {
     expect(await screen.findByRole('heading', { name: '問題集を共有' })).toBeInTheDocument();
     expect(await screen.findByLabelText('共有URL')).toBeInTheDocument();
     expect(await screen.findByAltText('共有する問題集 の共有QRコード')).toBeInTheDocument();
+  });
+});
+
+describe('Bolt 13: DashboardPage study status', () => {
+  it('shows in-progress and weak-question badges only on the quizzes they belong to', async () => {
+    const authRepo = new LocalAuthRepository();
+    const quizRepo = new LocalQuizRepository();
+    const studyRepo = new LocalStudyRepository();
+    const currentUser = await authRepo.signUp('learner@example.com', 'password123');
+    const questions = [
+      { question: 'Q1', choice1: 'A', choice2: 'B', choice3: null, choice4: null, answer: 1 as const, explanation: null },
+      { question: 'Q2', choice1: 'A', choice2: 'B', choice3: null, choice4: null, answer: 2 as const, explanation: null },
+    ];
+    const studied = await quizRepo.create(currentUser.id, { title: '学習中の問題集', questions });
+    await quizRepo.create(currentUser.id, { title: '未着手の問題集', questions });
+    const [q1, q2] = studied.questions;
+    await studyRepo.recordAnswer(currentUser.id, { quizId: studied.id, questionId: q1.id, isCorrect: false });
+    await studyRepo.saveSession(currentUser.id, {
+      quizId: studied.id,
+      mode: 'one_by_one',
+      targetFilter: 'all',
+      shuffleQuestions: false,
+      shuffleChoices: false,
+      questionIds: [q1.id, q2.id],
+      choicesOrder: { [q1.id]: [1, 2], [q2.id]: [1, 2] },
+      answers: { [q1.id]: 2 },
+      currentIndex: 1,
+    });
+
+    render(
+      <AppProvider authRepository={authRepo} quizRepository={quizRepo} studyRepository={studyRepo}>
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+
+    const studiedCard = (await screen.findByRole('heading', { name: '学習中の問題集' })).closest('article')!;
+    const freshCard = screen.getByRole('heading', { name: '未着手の問題集' }).closest('article')!;
+    expect(await within(studiedCard).findByText('進行中 (1 / 2問)')).toBeInTheDocument();
+    expect(within(studiedCard).getByText('苦手（正答率60%以下）: 1問')).toBeInTheDocument();
+    expect(within(freshCard).queryByText(/進行中|苦手/)).not.toBeInTheDocument();
   });
 });

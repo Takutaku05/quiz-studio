@@ -2,8 +2,11 @@ import type {
   ImportSharedQuizResult,
   ParsedQuestion,
   PasskeyCredential,
+  QuestionStat,
   Quiz,
+  QuizSession,
   QuizShare,
+  SaveQuizSessionInput,
   SharedQuizSummary,
   User,
 } from '../domain/types';
@@ -39,4 +42,21 @@ export interface QuizRepository {
   regenerateShare?(quizId: string, userId: string): Promise<QuizShare>;
   getSharedQuizSummary?(token: string): Promise<SharedQuizSummary | null>;
   importByShareToken?(token: string, userId: string): Promise<ImportSharedQuizResult>;
+}
+
+export interface RecordAnswerInput {
+  quizId: string;
+  questionId: string;
+  isCorrect: boolean;
+}
+
+export interface StudyRepository {
+  recordAnswer(userId: string, input: RecordAnswerInput): Promise<void>;
+  /** quizId を省略すると本人の全問題集の成績を返す */
+  listStats(userId: string, quizId?: string): Promise<QuestionStat[]>;
+  getSession(userId: string, quizId: string): Promise<QuizSession | null>;
+  listSessions(userId: string): Promise<QuizSession[]>;
+  /** (userId, quizId) ごとに1件。既存のセッションは確認なしで上書きする */
+  saveSession(userId: string, session: SaveQuizSessionInput): Promise<void>;
+  deleteSession(userId: string, quizId: string): Promise<void>;
 }

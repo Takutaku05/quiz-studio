@@ -40,3 +40,7 @@ Supabase（Auth + PostgreSQL + RLS）実装と `localStorage` 実装をリポジ
 | Bolt 07 | パスキー（WebAuthn）ログイン & 管理 | Auth / UI | `signInWithPasskey`、`registerPasskey`、`passkey.*` 管理モーダル、WebAuthnエラー変換 |
 | Bolt 08 | Excel（.xlsx）取込 & テンプレート | Domain / UI | `.xlsx` パース・シート選択、CSV/Excel テンプレート生成、アップロードモーダル拡張 |
 | Bolt 09 | 問題集のURL / QRコード共有 | DB / Auth / UI | `quiz_shares` / `import_shared_quiz`、認証後リダイレクト、`/share/:token` 自動インポート、共有モーダル |
+| Bolt 10 | 学習履歴・中断セッションのデータ層 | DB / Repository | `question_stats` / `quiz_sessions`、`record_question_answer`、`StudyRepository`（Supabase / LocalStorage） |
+| Bolt 11 | 復習フィルター & セッション復元 | Domain | 累積正答率60%以下・直近ミスの抽出、出題順・選択肢順のスナップショットと復元 |
+| Bolt 12 | クイズプレイ: 正誤記録・途中再開・出題対象 | UI (Quiz Player) | 1問ごとの記録、中断カードと再開、出題対象の選択、保存失敗時の継続 |
+| Bolt 13 | ダッシュボード: 進行中・苦手問題数 | UI (Dashboard) | `進行中 (n / m問)`、`苦手（正答率60%以下）: ◯問` |

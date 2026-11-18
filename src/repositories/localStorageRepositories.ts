@@ -7,6 +7,7 @@ import type {
   SharedQuizSummary,
   User,
 } from '../domain/types';
+import { purgeLocalStudyData } from './localStudyRepository';
 import type { AuthRepository, CreateQuizInput, QuizRepository } from './types';
 
 const STORAGE_KEYS = {
@@ -238,6 +239,8 @@ export class LocalQuizRepository implements QuizRepository {
     if (nextShares.length !== shares.length) {
       writeJson(STORAGE_KEYS.QUIZ_SHARES, nextShares);
     }
+
+    purgeLocalStudyData(quizId);
 
     return true;
   }
