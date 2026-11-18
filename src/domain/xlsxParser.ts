@@ -9,6 +9,7 @@ import {
   type RawQuestionRowEntry,
   validateQuestionRows,
 } from './csvParser';
+import { parseAndValidateJson } from './jsonParser';
 import type { ParsedQuestion } from './types';
 
 export const XLSX_MIME_TYPE =
@@ -27,10 +28,11 @@ export interface XlsxParseResult {
   errors: CsvValidationError[];
 }
 
-export type QuizUploadSourceType = 'csv' | 'xlsx';
+export type QuizUploadSourceType = 'csv' | 'xlsx' | 'json';
 
 export interface QuizUploadParseResult extends XlsxParseResult {
   sourceType: QuizUploadSourceType;
+  suggestedTitle: string | null;
 }
 
 function cellValueToString(value: CellValue | Date | null | undefined): string {
@@ -201,6 +203,7 @@ export async function parseQuizUploadFile(file: File): Promise<QuizUploadParseRe
     return {
       ok: false,
       sourceType: 'xlsx',
+      suggestedTitle: null,
       sheets: [],
       selectedSheetName: null,
       questions: [],
@@ -219,16 +222,32 @@ export async function parseQuizUploadFile(file: File): Promise<QuizUploadParseRe
     return {
       ...result,
       sourceType: 'xlsx',
+      suggestedTitle: null,
     };
   }
 
   const hasExtension = /\.[a-z0-9]+$/i.test(lowerName);
+  if (
+    lowerName.endsWith('.json') ||
+    (!hasExtension && (file.type === 'application/json' || file.type === 'text/json'))
+  ) {
+    const buffer = await readFileAsArrayBuffer(file);
+    const jsonResult = parseAndValidateJson(decodeCsvBuffer(buffer));
+    return {
+      ...jsonResult,
+      sourceType: 'json',
+      sheets: [],
+      selectedSheetName: null,
+    };
+  }
+
   if (lowerName.endsWith('.csv') || (!hasExtension && (file.type === 'text/csv' || file.type === 'text/plain'))) {
     const buffer = await readFileAsArrayBuffer(file);
     const csvResult = parseAndValidateCsv(decodeCsvBuffer(buffer));
     return {
       ...csvResult,
       sourceType: 'csv',
+      suggestedTitle: null,
       sheets: [],
       selectedSheetName: null,
     };
@@ -241,12 +260,14 @@ export async function parseQuizUploadFile(file: File): Promise<QuizUploadParseRe
       return {
         ...xlsxResult,
         sourceType: 'xlsx',
+        suggestedTitle: null,
       };
     }
     const csvResult = parseAndValidateCsv(decodeCsvBuffer(buffer));
     return {
       ...csvResult,
       sourceType: 'csv',
+      suggestedTitle: null,
       sheets: [],
       selectedSheetName: null,
     };
@@ -255,13 +276,14 @@ export async function parseQuizUploadFile(file: File): Promise<QuizUploadParseRe
   return {
     ok: false,
     sourceType: 'csv',
+    suggestedTitle: null,
     sheets: [],
     selectedSheetName: null,
     questions: [],
     errors: [
       {
         row: 1,
-        message: '対応しているファイル形式は CSV（.csv）または Excel（.xlsx）です。',
+        message: '対応しているファイル形式は CSV（.csv）、Excel（.xlsx）、JSON（.json）です。',
       },
     ],
   };

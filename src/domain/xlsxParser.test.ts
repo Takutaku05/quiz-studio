@@ -147,4 +147,60 @@ describe('xlsxParser', () => {
     expect(corruptResult.ok).toBe(false);
     expect(corruptResult.errors[0].message).toContain('.xlsx');
   });
+
+  it('parses .json files (object with title, root array, BOM, empty MIME) and reports invalid .json errors', async () => {
+    const objectPayload = JSON.stringify({
+      title: 'JSONから取り込んだ問題集',
+      questions: [
+        {
+          question: '日本の首都は？',
+          choice1: '東京',
+          choice2: '大阪',
+          answer: 1,
+          explanation: '東京です',
+        },
+      ],
+    });
+    const objectFile = new File([objectPayload], 'raw-export.json', { type: '' });
+    const objectResult = await parseQuizUploadFile(objectFile);
+
+    expect(objectResult.ok).toBe(true);
+    expect(objectResult.sourceType).toBe('json');
+    expect(objectResult.suggestedTitle).toBe('JSONから取り込んだ問題集');
+    expect(objectResult.sheets).toEqual([]);
+    expect(objectResult.selectedSheetName).toBeNull();
+    expect(objectResult.questions).toEqual([
+      {
+        question: '日本の首都は？',
+        choice1: '東京',
+        choice2: '大阪',
+        choice3: null,
+        choice4: null,
+        answer: 1,
+        explanation: '東京です',
+      },
+    ]);
+
+    const arrayPayload = `\uFEFF${JSON.stringify([
+      { question: '配列Q1', choice1: 'A', choice2: 'B', answer: '2' },
+    ])}`;
+    const arrayFile = new File([arrayPayload], 'no-ext-json', {
+      type: 'application/json',
+    });
+    const arrayResult = await parseQuizUploadFile(arrayFile);
+
+    expect(arrayResult.ok).toBe(true);
+    expect(arrayResult.sourceType).toBe('json');
+    expect(arrayResult.suggestedTitle).toBeNull();
+    expect(arrayResult.questions[0].answer).toBe(2);
+
+    const brokenJsonFile = new File(['{invalid json'], 'broken.json', {
+      type: 'application/json',
+    });
+    const brokenResult = await parseQuizUploadFile(brokenJsonFile);
+
+    expect(brokenResult.ok).toBe(false);
+    expect(brokenResult.sourceType).toBe('json');
+    expect(brokenResult.errors[0].message).toContain('JSON');
+  });
 });

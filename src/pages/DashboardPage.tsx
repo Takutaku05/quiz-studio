@@ -192,7 +192,7 @@ export function DashboardPage() {
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-slate-900">マイ問題集</h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              CSV や Excel（.xlsx）をアップロードして反復学習を始めましょう
+              CSV・Excel（.xlsx）・JSON や ChatGPT の出力テキストを登録して反復学習を始めましょう
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5">
@@ -233,7 +233,7 @@ export function DashboardPage() {
             <BookOpen className="w-10 h-10 text-slate-300 mx-auto mb-3" />
             <p className="text-slate-700 font-medium">まだ問題集がありません</p>
             <p className="text-sm text-slate-500 mt-1 mb-5">
-              テンプレート（Excel / CSV）をダウンロードして問題を作成し、「最初の問題集をアップロード」から登録してください。
+              テンプレート（Excel / CSV）や ChatGPT 出力のテキスト貼り付けで問題を作成し、「最初の問題集をアップロード」から登録してください。
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3">
               <button
