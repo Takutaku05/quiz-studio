@@ -7,9 +7,7 @@ import {
   type FormEvent,
 } from 'react';
 import {
-  AlertCircle,
   Check,
-  CheckCircle2,
   ChevronDown,
   ChevronUp,
   ClipboardPaste,
@@ -29,7 +27,6 @@ import {
   CSV_TEMPLATE_SAMPLE_ROWS,
   downloadCsvTemplate,
 } from '../domain/csvTemplate';
-import { parseQuizTextInput } from '../domain/jsonParser';
 import {
   parseQuizUploadFile,
   type ParsedSheetResult,
@@ -38,6 +35,15 @@ import {
 } from '../domain/xlsxParser';
 import { downloadXlsxTemplate } from '../domain/xlsxTemplate';
 import type { ParsedQuestion } from '../domain/types';
+import { copyTextToClipboard } from '../lib/clipboard';
+import { useQuizPasteState } from '../lib/useQuizPasteState';
+import { useTransientFlag } from '../lib/useTransientFlag';
+import {
+  PROMPT_MANUAL_COPY_FALLBACK_NOTICE,
+  PromptPreviewBox,
+  QuizImportFeedback,
+  QuizTextPastePanel,
+} from './QuizImportShared';
 
 type ImportTab = 'paste' | 'file';
 
@@ -68,33 +74,6 @@ function getDefaultImportTab(): ImportTab {
 
 function stripQuizFileExtension(filename: string): string {
   return filename.replace(/\.(csv|xlsx|xls|json)$/i, '');
-}
-
-async function copyTextToClipboard(text: string): Promise<boolean> {
-  if (typeof navigator === 'undefined' || typeof navigator.clipboard?.writeText !== 'function') {
-    return false;
-  }
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function useTransientFlag(durationMs = 2000): [boolean, () => void, () => void] {
-  const [active, setActive] = useState(false);
-
-  useEffect(() => {
-    if (!active) return;
-    const timer = window.setTimeout(() => setActive(false), durationMs);
-    return () => window.clearTimeout(timer);
-  }, [active, durationMs]);
-
-  const trigger = useCallback(() => setActive(true), []);
-  const clear = useCallback(() => setActive(false), []);
-
-  return [active, trigger, clear];
 }
 
 interface TemplateGuideSectionProps {
@@ -189,25 +168,10 @@ function TemplateGuideSection({
       </div>
 
       {promptPreviewOpen && (
-        <div className="rounded-lg border border-indigo-200 bg-white p-3 space-y-2">
-          {promptFallbackNotice && (
-            <p className="text-xs text-amber-700 font-medium">{promptFallbackNotice}</p>
-          )}
-          <label
-            htmlFor="chatgpt-prompt-preview"
-            className="block text-xs font-semibold text-slate-700"
-          >
-            ChatGPT用プロンプト本文
-          </label>
-          <textarea
-            id="chatgpt-prompt-preview"
-            readOnly
-            rows={6}
-            value={CHATGPT_PROJECT_PROMPT}
-            onFocus={(e) => e.currentTarget.select()}
-            className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-[11px] font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-        </div>
+        <PromptPreviewBox
+          textareaId="chatgpt-prompt-preview"
+          fallbackNotice={promptFallbackNotice}
+        />
       )}
 
       {isGuideExpanded && (
@@ -319,6 +283,8 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
   const [isGuideExpanded, setIsGuideExpanded] = useState<boolean>(() => !isMobileViewport());
   const [title, setTitle] = useState('');
   const titleManuallyEditedRef = useRef(false);
+  const titleRef = useRef(title);
+  titleRef.current = title;
 
   // File upload tab state
   const [fileName, setFileName] = useState<string | null>(null);
@@ -331,13 +297,6 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
   const [isDragging, setIsDragging] = useState(false);
   const parseRequestIdRef = useRef(0);
 
-  // Text paste tab state
-  const [pastedText, setPastedText] = useState('');
-  const [pasteFormat, setPasteFormat] = useState<'json' | 'csv' | null>(null);
-  const [pasteQuestions, setPasteQuestions] = useState<ParsedQuestion[]>([]);
-  const [pasteErrors, setPasteErrors] = useState<CsvValidationError[]>([]);
-  const [clipboardNotice, setClipboardNotice] = useState<string | null>(null);
-
   // Shared save / helper state
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -346,6 +305,24 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
   const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
   const [promptFallbackNotice, setPromptFallbackNotice] = useState<string | null>(null);
   const [downloadingXlsx, setDownloadingXlsx] = useState(false);
+
+  const {
+    pastedText,
+    pasteFormat,
+    pasteQuestions,
+    pasteErrors,
+    clipboardNotice,
+    applyPastedText,
+    handlePasteFromClipboard,
+    resetPasteState,
+  } = useQuizPasteState({
+    onBeforeApply: () => setSaveError(null),
+    onSuggestTitle: (suggestedTitle) => {
+      if (!titleManuallyEditedRef.current && titleRef.current.trim() === '') {
+        setTitle(suggestedTitle);
+      }
+    },
+  });
 
   const resetState = useCallback(() => {
     parseRequestIdRef.current += 1;
@@ -361,11 +338,7 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
     setSelectedSheetName(null);
     setParsing(false);
     setIsDragging(false);
-    setPastedText('');
-    setPasteFormat(null);
-    setPasteQuestions([]);
-    setPasteErrors([]);
-    setClipboardNotice(null);
+    resetPasteState();
     setSaveError(null);
     setSaving(false);
     clearCopiedTemplate();
@@ -373,7 +346,7 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
     setPromptPreviewOpen(false);
     setPromptFallbackNotice(null);
     setDownloadingXlsx(false);
-  }, [clearCopiedPrompt, clearCopiedTemplate]);
+  }, [clearCopiedPrompt, clearCopiedTemplate, resetPasteState]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -411,9 +384,7 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
       return;
     }
     setPromptPreviewOpen(true);
-    setPromptFallbackNotice(
-      '自動コピーできない場合は、下のプロンプト本文をすべて選択してコピーしてください。',
-    );
+    setPromptFallbackNotice(PROMPT_MANUAL_COPY_FALLBACK_NOTICE);
   };
 
   const handleDownloadXlsxTemplate = async () => {
@@ -438,57 +409,6 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
     } else {
       setFileQuestions([]);
       setFileErrors(matched.result.errors);
-    }
-  };
-
-  const applyPastedText = (nextText: string) => {
-    setPastedText(nextText);
-    setSaveError(null);
-
-    if (!nextText.trim()) {
-      setPasteFormat(null);
-      setPasteQuestions([]);
-      setPasteErrors([]);
-      return;
-    }
-
-    const result = parseQuizTextInput(nextText);
-    setPasteFormat(result.format);
-
-    if (
-      result.format === 'json' &&
-      result.suggestedTitle &&
-      !titleManuallyEditedRef.current &&
-      title.trim() === ''
-    ) {
-      setTitle(result.suggestedTitle);
-    }
-
-    if (result.ok) {
-      setPasteQuestions(result.questions);
-      setPasteErrors([]);
-    } else {
-      setPasteQuestions([]);
-      setPasteErrors(result.errors);
-    }
-  };
-
-  const handlePasteFromClipboard = async () => {
-    setClipboardNotice(null);
-    if (typeof navigator === 'undefined' || typeof navigator.clipboard?.readText !== 'function') {
-      setClipboardNotice('自動読み取りに対応していません。下の入力欄を長押しして「ペースト」してください。');
-      return;
-    }
-
-    try {
-      const clipText = await navigator.clipboard.readText();
-      if (!clipText.trim()) {
-        setClipboardNotice('クリップボードが空です。ChatGPTの回答をコピーしてからもう一度お試しください。');
-        return;
-      }
-      applyPastedText(clipText);
-    } catch {
-      setClipboardNotice('自動読み取りが許可されていません。下の入力欄を長押しして「ペースト」してください。');
     }
   };
 
@@ -668,53 +588,16 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
           </div>
 
           {activeTab === 'paste' ? (
-            <div role="tabpanel" aria-label="テキストを貼り付け" className="space-y-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handlePasteFromClipboard();
-                  }}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 text-sm font-semibold transition-colors cursor-pointer"
-                >
-                  <ClipboardPaste className="w-4 h-4" />
-                  <span>クリップボードから貼り付け</span>
-                </button>
-                {pastedText && (
-                  <button
-                    type="button"
-                    onClick={() => applyPastedText('')}
-                    className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 cursor-pointer"
-                  >
-                    入力をクリア
-                  </button>
-                )}
-              </div>
-
-              {clipboardNotice && (
-                <p className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
-                  {clipboardNotice}
-                </p>
-              )}
-
-              <div>
-                <label
-                  htmlFor="quiz-paste-input"
-                  className="block text-sm font-medium text-slate-700 mb-1"
-                >
-                  問題データ（JSON / CSV テキスト）
-                </label>
-                <textarea
-                  id="quiz-paste-input"
-                  rows={6}
-                  value={pastedText}
-                  onChange={(e) => applyPastedText(e.target.value)}
-                  placeholder={
-                    'ChatGPT の回答をそのまま貼り付けてください（前後の文章や ```json / ```csv ごとでも取り込めます）'
-                  }
-                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-xs sm:text-sm font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
+            <div role="tabpanel" aria-label="テキストを貼り付け">
+              <QuizTextPastePanel
+                inputId="quiz-paste-input"
+                pastedText={pastedText}
+                clipboardNotice={clipboardNotice}
+                onChangeText={applyPastedText}
+                onPasteFromClipboard={() => {
+                  void handlePasteFromClipboard();
+                }}
+              />
             </div>
           ) : (
             <div role="tabpanel" aria-label="ファイルをアップロード" className="space-y-3">
@@ -789,38 +672,12 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
             </div>
           )}
 
-          {activeParsing && (
-            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 text-sm text-slate-600">
-              ファイルを読み込み中...
-            </div>
-          )}
-
-          {activeErrors.length > 0 && (
-            <div
-              role="alert"
-              className="rounded-xl bg-rose-50 border border-rose-200 p-3.5 space-y-2"
-            >
-              <div className="flex items-center gap-2 text-sm font-semibold text-rose-800">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>読み込みエラーがあります（{activeErrors.length}件）</span>
-              </div>
-              <ul className="text-xs text-rose-700 space-y-1 max-h-40 overflow-y-auto list-disc list-inside">
-                {activeErrors.map((err, idx) => (
-                  <li key={`${err.row}-${idx}`}>
-                    {err.row}
-                    {rowLabelUnit}: {err.message}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {activeQuestions.length > 0 && activeErrors.length === 0 && (
-            <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3.5 flex items-center gap-2 text-sm text-emerald-800">
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
-              <span>{activeQuestions.length}問の問題を読み込みました。</span>
-            </div>
-          )}
+          <QuizImportFeedback
+            parsing={activeParsing}
+            errors={activeErrors}
+            questionCount={activeQuestions.length}
+            rowLabelUnit={rowLabelUnit}
+          />
 
           <TemplateGuideSection
             copiedPrompt={copiedPrompt}

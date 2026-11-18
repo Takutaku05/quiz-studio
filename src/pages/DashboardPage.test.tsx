@@ -338,3 +338,134 @@ describe('Bolt 14: DashboardPage text paste import integration', () => {
     expect(screen.getByText('1問')).toBeInTheDocument();
   });
 });
+
+describe('Bolt 15: DashboardPage AI 2-step quiz creation flow', () => {
+  it('shows "AIで問題集を作る" in empty state and completes 2-step flow to create a quiz', async () => {
+    const user = userEvent.setup();
+    const authRepo = new LocalAuthRepository();
+    const quizRepo = new LocalQuizRepository();
+    await authRepo.signUp('ai-starter@example.com', 'password123');
+    const writeTextSpy = vi
+      .spyOn(navigator.clipboard, 'writeText')
+      .mockResolvedValue(undefined);
+
+    try {
+      render(
+        <AppProvider authRepository={authRepo} quizRepository={quizRepo}>
+          <MemoryRouter initialEntries={['/']}>
+            <Routes>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/login" element={<div>Login Screen</div>} />
+            </Routes>
+          </MemoryRouter>
+        </AppProvider>,
+      );
+
+      expect(await screen.findByText('まだ問題集がありません')).toBeInTheDocument();
+      const aiButtons = screen.getAllByRole('button', { name: 'AIで問題集を作る' });
+      expect(aiButtons).toHaveLength(2); // Header action area + empty state card
+
+      // Start from empty-state CTA button
+      await user.click(aiButtons[1]);
+
+      // Step 1: Copy prompt -> transitions automatically to step 2
+      expect(
+        screen.getByText(/① 下のボタンで ChatGPT 用のプロンプトをコピーします/),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /ChatGPT用のプロンプトをコピー/ }));
+
+      await waitFor(() => {
+        expect(writeTextSpy).toHaveBeenCalledTimes(1);
+        expect(screen.getByLabelText('問題集タイトル')).toBeInTheDocument();
+      });
+
+      // Step 2: Re-copy button at top still works without leaving step 2
+      await user.click(screen.getByRole('button', { name: /ChatGPT用のプロンプトをコピー/ }));
+      expect(writeTextSpy).toHaveBeenCalledTimes(2);
+      expect(await screen.findByText('コピーしました')).toBeInTheDocument();
+
+      const textarea = screen.getByLabelText(/問題データ（JSON \/ CSV テキスト）/);
+      fireEvent.change(textarea, {
+        target: {
+          value: [
+            '```json',
+            JSON.stringify({
+              title: 'AI2ステップ作成クイズ',
+              questions: [
+                { question: 'HTTPSのポート番号は？', choice1: '443', choice2: '80', answer: 1 },
+              ],
+            }),
+            '```',
+          ].join('\n'),
+        },
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '保存' })).toBeEnabled();
+      });
+      await user.click(screen.getByRole('button', { name: '保存' }));
+
+      expect(await screen.findByText('AI2ステップ作成クイズ')).toBeInTheDocument();
+      expect(screen.getByText('1問')).toBeInTheDocument();
+    } finally {
+      writeTextSpy.mockRestore();
+    }
+  });
+
+  it('creates an additional quiz from header "AIで問題集を作る" when quizzes already exist', async () => {
+    const user = userEvent.setup();
+    const authRepo = new LocalAuthRepository();
+    const quizRepo = new LocalQuizRepository();
+    const currentUser = await authRepo.signUp('ai-existing@example.com', 'password123');
+    await quizRepo.create(currentUser.id, {
+      title: '既存クイズ',
+      questions: [
+        {
+          question: '1+1は？',
+          choice1: '2',
+          choice2: '3',
+          choice3: null,
+          choice4: null,
+          answer: 1,
+          explanation: null,
+        },
+      ],
+    });
+    const writeTextSpy = vi
+      .spyOn(navigator.clipboard, 'writeText')
+      .mockResolvedValue(undefined);
+
+    try {
+      render(
+        <AppProvider authRepository={authRepo} quizRepository={quizRepo}>
+          <MemoryRouter initialEntries={['/']}>
+            <Routes>
+              <Route path="/" element={<DashboardPage />} />
+            </Routes>
+          </MemoryRouter>
+        </AppProvider>,
+      );
+
+      expect(await screen.findByText('既存クイズ')).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'AIで問題集を作る' }));
+      await user.click(screen.getByRole('button', { name: /ChatGPT用のプロンプトをコピー/ }));
+
+      const textarea = await screen.findByLabelText(/問題データ（JSON \/ CSV テキスト）/);
+      fireEvent.change(textarea, {
+        target: {
+          value: JSON.stringify({
+            title: '追加AIクイズ',
+            questions: [{ question: 'Q', choice1: 'A', choice2: 'B', answer: 2 }],
+          }),
+        },
+      });
+
+      await user.click(screen.getByRole('button', { name: '保存' }));
+
+      expect(await screen.findByText('追加AIクイズ')).toBeInTheDocument();
+      expect(screen.getByText('既存クイズ')).toBeInTheDocument();
+    } finally {
+      writeTextSpy.mockRestore();
+    }
+  });
+});

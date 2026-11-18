@@ -10,9 +10,11 @@ import {
   Play,
   Plus,
   Share2,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
+import { AiQuizCreationModal } from '../components/AiQuizCreationModal';
 import { CsvUploadModal } from '../components/CsvUploadModal';
 import { PasskeySettingsModal } from '../components/PasskeySettingsModal';
 import { ShareQuizModal } from '../components/ShareQuizModal';
@@ -37,6 +39,7 @@ export function DashboardPage() {
   const [sessionsByQuiz, setSessionsByQuiz] = useState<Map<string, QuizSession>>(new Map());
   const [statsByQuiz, setStatsByQuiz] = useState<Map<string, QuestionStat[]>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [isAiCreationOpen, setIsAiCreationOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isPasskeyOpen, setIsPasskeyOpen] = useState(false);
   const [sharingQuiz, setSharingQuiz] = useState<Quiz | null>(null);
@@ -198,6 +201,22 @@ export function DashboardPage() {
           <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
+              onClick={() => setIsAiCreationOpen(true)}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-sm font-semibold shadow-sm transition-all cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>AIで問題集を作る</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsUploadOpen(true)}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-indigo-300 hover:bg-indigo-50 text-indigo-700 text-sm font-semibold shadow-xs transition-colors cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>新規問題集アップロード</span>
+            </button>
+            <button
+              type="button"
               disabled={downloadingXlsx}
               onClick={() => {
                 void handleDownloadXlsxTemplate();
@@ -215,14 +234,6 @@ export function DashboardPage() {
               <Download className="w-4 h-4 text-indigo-600" />
               <span>テンプレートCSV</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setIsUploadOpen(true)}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold shadow-sm transition-colors cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>新規問題集アップロード</span>
-            </button>
           </div>
         </div>
 
@@ -233,9 +244,25 @@ export function DashboardPage() {
             <BookOpen className="w-10 h-10 text-slate-300 mx-auto mb-3" />
             <p className="text-slate-700 font-medium">まだ問題集がありません</p>
             <p className="text-sm text-slate-500 mt-1 mb-5">
-              テンプレート（Excel / CSV）や ChatGPT 出力のテキスト貼り付けで問題を作成し、「最初の問題集をアップロード」から登録してください。
+              「AIで問題集を作る」から ChatGPT で問題を作成して貼り付けるか、テンプレート（Excel / CSV）で作成したファイルをアップロードしてください。
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setIsAiCreationOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-sm font-semibold shadow-sm transition-all cursor-pointer"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>AIで問題集を作る</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsUploadOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-indigo-300 hover:bg-indigo-50 text-indigo-700 text-sm font-semibold cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>最初の問題集をアップロード</span>
+              </button>
               <button
                 type="button"
                 disabled={downloadingXlsx}
@@ -258,14 +285,6 @@ export function DashboardPage() {
               >
                 <Download className="w-4 h-4 text-indigo-600" />
                 <span>テンプレートCSVをダウンロード</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsUploadOpen(true)}
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>最初の問題集をアップロード</span>
               </button>
             </div>
           </div>
@@ -351,6 +370,11 @@ export function DashboardPage() {
         )}
       </main>
 
+      <AiQuizCreationModal
+        isOpen={isAiCreationOpen}
+        onClose={() => setIsAiCreationOpen(false)}
+        onSave={handleUploadSave}
+      />
       <CsvUploadModal
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
