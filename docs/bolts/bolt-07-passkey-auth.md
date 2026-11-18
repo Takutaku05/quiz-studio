@@ -14,8 +14,8 @@ Supabase Auth のネイティブパスキー機能（WebAuthn / `@supabase/supab
 - **外部設定要件（手動設定が必要）**:
   - Supabase Dashboard の `Authentication -> Passkeys` を有効化し、以下を設定する：
     - **Relying Party Display Name**: `CSV Quiz Studio`
-    - **Relying Party ID**: `csv-quiz-studio.takutakus.com`（ローカル検証時は `localhost`）
-    - **Relying Party Origins**: `https://csv-quiz-studio.takutakus.com`
+    - **Relying Party ID**: `quiz-studio.takutakus.com`（ローカル検証時は `localhost`）
+    - **Relying Party Origins**: `https://quiz-studio.takutakus.com`
 
 ## Requirements & Acceptance Criteria
 1. **ドメイン型 & 認証リポジトリ (`PasskeyCredential` / `AuthRepository`)**

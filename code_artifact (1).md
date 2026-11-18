@@ -8,7 +8,7 @@
 
 | レイヤー | 採用技術・サービス | 用途・選定理由 |
 | ----- | ----- | ----- |
-| **ホスティング / CDN** | Cloudflare Pages | GitHubリポジトリ連携による自動ビルド・デプロイ。所有済み独自ドメイン（`csv-quiz-studio.takutakus.com`）の設定およびSSL化。 |
+| **ホスティング / CDN** | Cloudflare Pages | GitHubリポジトリ連携による自動ビルド・デプロイ。所有済み独自ドメイン（`quiz-studio.takutakus.com`）の設定およびSSL化。 |
 | **フロントエンド** | React (Vite) + TypeScript + React Router | SPA（Single Page Application）として高速に動作し、Cloudflare Pagesとの相性が最も良い構成。 |
 | **スタイリング** | Tailwind CSS / lucide-react | スマホ・PC両対応のレスポンシブUIを迅速に構築するため。 |
 | **CSVパーサー** | PapaParse + `TextDecoder` | ブラウザ上でのCSV読み込み、エスケープ処理、ヘッダー認識。UTF-8 / Shift-JIS を自動判別する。 |
