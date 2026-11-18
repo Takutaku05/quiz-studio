@@ -126,7 +126,7 @@ export function DashboardPage() {
         <div className="max-w-4xl mx-auto px-4 py-3.5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <BookOpen className="w-6 h-6 text-indigo-600 shrink-0" />
-            <span className="font-bold text-slate-900 truncate">CSV Quiz Studio</span>
+            <span className="font-bold text-slate-900 truncate">Quiz Studio</span>
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
             <span className="hidden sm:inline text-xs text-slate-500 truncate max-w-[200px]">

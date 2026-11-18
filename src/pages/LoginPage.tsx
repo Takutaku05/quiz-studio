@@ -164,7 +164,7 @@ export function LoginPage() {
           <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center mb-3">
             <BookOpenCheck className="w-6 h-6" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">CSV Quiz Studio</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Quiz Studio</h1>
           <p className="text-sm text-slate-500 mt-1">
             {mode === 'signin'
               ? 'アカウントにログインして学習を始める'

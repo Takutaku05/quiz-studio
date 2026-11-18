@@ -1,4 +1,4 @@
-# csv-quiz-studio
+# Quiz Studio
 ## Supabase 連携
 
 `.env.local` に以下を設定すると、認証と問題集の保存先が Supabase（Auth + PostgreSQL + RLS）になります。未設定の場合とテスト実行時は従来どおり `localStorage` を使います。
@@ -27,5 +27,5 @@ DB スキーマは `supabase/migrations/` にあります（`quizzes` / `questio
 ### パスキー（WebAuthn）設定
 
 1. Supabase Dashboard の `Authentication -> Passkeys` を有効化します。
-2. WebAuthn Relying Party を設定します（本番: Display Name `CSV Quiz Studio` / Relying Party ID `quiz-studio.takutakus.com` / Origins `https://quiz-studio.takutakus.com`）。
+2. WebAuthn Relying Party を設定します（本番: Display Name `Quiz Studio` / Relying Party ID `quiz-studio.takutakus.com` / Origins `https://quiz-studio.takutakus.com`）。
 3. メールアドレスまたは Google で一度ログインし、ダッシュボード右上の「パスキー設定」からパスキーを登録すると、次回以降 `/login` の「パスキーでログイン」が利用できます。
