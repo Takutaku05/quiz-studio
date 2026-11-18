@@ -10,7 +10,7 @@ Supabase Auth の Google OAuth（`signInWithOAuth`）を利用したソーシャ
 - **外部設定要件（手動設定が必要）**:
   1. Google Cloud Console で OAuth 2.0 クライアント ID（ウェブアプリケーション）を作成し、承認済みのリダイレクト URI に `https://<project-ref>.supabase.co/auth/v1/callback` を登録する。
   2. Supabase Dashboard の `Authentication -> Providers -> Google` を有効化し、Client ID / Client Secret を設定する。
-  3. Supabase Dashboard の `Authentication -> URL Configuration -> Redirect URLs` に本番（`https://csv-quiz-studio.takutakus.com/**`）およびローカル（`http://localhost:5173/**`）を登録する。
+  3. Supabase Dashboard の `Authentication -> URL Configuration -> Redirect URLs` に本番（`https://quiz-studio.takutakus.com/**`）およびローカル（`http://localhost:5173/**`）を登録する。
 
 ## Requirements & Acceptance Criteria
 1. **認証リポジトリ (`AuthRepository`)**

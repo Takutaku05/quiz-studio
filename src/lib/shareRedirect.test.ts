@@ -22,8 +22,8 @@ describe('shareRedirect helpers', () => {
 
   it('builds share paths and URLs cleanly', () => {
     expect(buildSharePath(' abc-123 ')).toBe('/share/abc-123');
-    expect(buildShareUrl('abc123', 'https://csv-quiz-studio.takutakus.com')).toBe(
-      'https://csv-quiz-studio.takutakus.com/share/abc123',
+    expect(buildShareUrl('abc123', 'https://quiz-studio.takutakus.com')).toBe(
+      'https://quiz-studio.takutakus.com/share/abc123',
     );
   });
 
