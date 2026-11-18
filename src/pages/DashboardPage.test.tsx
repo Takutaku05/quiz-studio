@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -279,5 +279,62 @@ describe('Bolt 13: DashboardPage study status', () => {
     expect(await within(studiedCard).findByText('進行中 (1 / 2問)')).toBeInTheDocument();
     expect(within(studiedCard).getByText('苦手（正答率60%以下）: 1問')).toBeInTheDocument();
     expect(within(freshCard).queryByText(/進行中|苦手/)).not.toBeInTheDocument();
+  });
+});
+
+describe('Bolt 14: DashboardPage text paste import integration', () => {
+  it('keeps dashboard header clean of prompt copy button and creates quiz via modal text paste', async () => {
+    const user = userEvent.setup();
+    const authRepo = new LocalAuthRepository();
+    const quizRepo = new LocalQuizRepository();
+    await authRepo.signUp('chatgpt-user@example.com', 'password123');
+
+    render(
+      <AppProvider authRepository={authRepo} quizRepository={quizRepo}>
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/login" element={<div>Login Screen</div>} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText('マイ問題集')).toBeInTheDocument();
+    // Prompt copy button belongs inside the upload modal only, not on dashboard header
+    expect(
+      screen.queryByRole('button', { name: /ChatGPT用プロンプトをコピー/ }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /新規問題集アップロード/ }));
+    expect(
+      screen.getByRole('button', { name: /ChatGPT用プロンプトをコピー/ }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'テキストを貼り付け' }));
+    const textarea = screen.getByLabelText(/問題データ（JSON \/ CSV テキスト）/);
+    fireEvent.change(textarea, {
+      target: {
+        value: [
+          '問題を作りました！',
+          '```json',
+          JSON.stringify({
+            title: 'ChatGPT作成クイズ',
+            questions: [
+              { question: 'HTTPの200は？', choice1: 'OK', choice2: 'Not Found', answer: 1 },
+            ],
+          }),
+          '```',
+        ].join('\n'),
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '保存' })).toBeEnabled();
+    });
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(await screen.findByText('ChatGPT作成クイズ')).toBeInTheDocument();
+    expect(screen.getByText('1問')).toBeInTheDocument();
   });
 });

@@ -1,14 +1,27 @@
-import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type FormEvent,
+} from 'react';
 import {
   AlertCircle,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  ClipboardPaste,
   Copy,
   Download,
   FileSpreadsheet,
+  FileText,
+  Sparkles,
   Upload,
   X,
 } from 'lucide-react';
+import { CHATGPT_PROJECT_PROMPT } from '../domain/chatgptPrompt';
 import { REQUIRED_CSV_HEADERS, type CsvValidationError } from '../domain/csvParser';
 import {
   buildCsvTemplateContent,
@@ -16,13 +29,17 @@ import {
   CSV_TEMPLATE_SAMPLE_ROWS,
   downloadCsvTemplate,
 } from '../domain/csvTemplate';
+import { parseQuizTextInput } from '../domain/jsonParser';
 import {
   parseQuizUploadFile,
   type ParsedSheetResult,
+  type QuizUploadSourceType,
   XLSX_MIME_TYPE,
 } from '../domain/xlsxParser';
 import { downloadXlsxTemplate } from '../domain/xlsxTemplate';
 import type { ParsedQuestion } from '../domain/types';
+
+type ImportTab = 'paste' | 'file';
 
 interface CsvUploadModalProps {
   isOpen: boolean;
@@ -30,57 +47,373 @@ interface CsvUploadModalProps {
   onSave: (title: string, questions: ParsedQuestion[]) => Promise<void>;
 }
 
+const MOBILE_BREAKPOINT_PX = 640;
+
+function isMobileViewport(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  if (window.innerWidth < MOBILE_BREAKPOINT_PX) {
+    return true;
+  }
+  return (
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX - 1}px)`).matches
+  );
+}
+
+function getDefaultImportTab(): ImportTab {
+  return isMobileViewport() ? 'paste' : 'file';
+}
+
+function stripQuizFileExtension(filename: string): string {
+  return filename.replace(/\.(csv|xlsx|xls|json)$/i, '');
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator === 'undefined' || typeof navigator.clipboard?.writeText !== 'function') {
+    return false;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function useTransientFlag(durationMs = 2000): [boolean, () => void, () => void] {
+  const [active, setActive] = useState(false);
+
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setTimeout(() => setActive(false), durationMs);
+    return () => window.clearTimeout(timer);
+  }, [active, durationMs]);
+
+  const trigger = useCallback(() => setActive(true), []);
+  const clear = useCallback(() => setActive(false), []);
+
+  return [active, trigger, clear];
+}
+
+interface TemplateGuideSectionProps {
+  copiedPrompt: boolean;
+  copiedTemplate: boolean;
+  downloadingXlsx: boolean;
+  promptPreviewOpen: boolean;
+  promptFallbackNotice: string | null;
+  isGuideExpanded: boolean;
+  onCopyPrompt: () => void;
+  onTogglePromptPreview: () => void;
+  onToggleGuide: () => void;
+  onDownloadXlsxTemplate: () => void;
+  onCopyTemplate: () => void;
+}
+
+function TemplateGuideSection({
+  copiedPrompt,
+  copiedTemplate,
+  downloadingXlsx,
+  promptPreviewOpen,
+  promptFallbackNotice,
+  isGuideExpanded,
+  onCopyPrompt,
+  onTogglePromptPreview,
+  onToggleGuide,
+  onDownloadXlsxTemplate,
+  onCopyTemplate,
+}: TemplateGuideSectionProps) {
+  return (
+    <section
+      aria-label="鋳型（テンプレート）と書き方"
+      className="rounded-xl border border-slate-200 bg-slate-50/80 p-3.5 sm:p-4 space-y-3"
+    >
+      <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-bold text-slate-800">鋳型（テンプレート）と書き方</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              ChatGPT プロジェクトの指示欄にプロンプトを貼ると、ファイル不要でそのまま問題を取り込めます
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onCopyPrompt}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold text-white transition-colors cursor-pointer"
+            >
+              {copiedPrompt ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>コピーしました</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>ChatGPT用プロンプトをコピー</span>
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={onTogglePromptPreview}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>{promptPreviewOpen ? 'プロンプトを隠す' : 'プロンプトを確認'}</span>
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <button
+            type="button"
+            aria-expanded={isGuideExpanded}
+            onClick={onToggleGuide}
+            className="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 hover:text-indigo-800 cursor-pointer"
+          >
+            {isGuideExpanded ? (
+              <>
+                <ChevronUp className="w-3.5 h-3.5" />
+                <span>テンプレートダウンロード・書き方ガイドを閉じる</span>
+              </>
+            ) : (
+              <>
+                <ChevronDown className="w-3.5 h-3.5" />
+                <span>テンプレートダウンロード・書き方ガイドを見る</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {promptPreviewOpen && (
+        <div className="rounded-lg border border-indigo-200 bg-white p-3 space-y-2">
+          {promptFallbackNotice && (
+            <p className="text-xs text-amber-700 font-medium">{promptFallbackNotice}</p>
+          )}
+          <label
+            htmlFor="chatgpt-prompt-preview"
+            className="block text-xs font-semibold text-slate-700"
+          >
+            ChatGPT用プロンプト本文
+          </label>
+          <textarea
+            id="chatgpt-prompt-preview"
+            readOnly
+            rows={6}
+            value={CHATGPT_PROJECT_PROMPT}
+            onFocus={(e) => e.currentTarget.select()}
+            className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-[11px] font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+      )}
+
+      {isGuideExpanded && (
+        <div className="space-y-3 pt-1 border-t border-slate-200/80">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={downloadingXlsx}
+              onClick={onDownloadXlsxTemplate}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-indigo-200 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-60 cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>
+                {downloadingXlsx ? 'Excel作成中...' : 'テンプレートExcel（.xlsx）をダウンロード'}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={downloadCsvTemplate}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>テンプレートCSVをダウンロード</span>
+            </button>
+            <button
+              type="button"
+              onClick={onCopyTemplate}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
+            >
+              {copiedTemplate ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="text-emerald-700">コピーしました</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>サンプルCSVをコピー</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
+            {CSV_COLUMN_GUIDES.map((col) => (
+              <div
+                key={col.name}
+                className="flex items-start gap-2 rounded-lg bg-white border border-slate-200/80 px-2.5 py-1.5"
+              >
+                <code className="font-mono font-semibold text-indigo-700 shrink-0">
+                  {col.name}
+                </code>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${
+                    col.required ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {col.required ? '必須' : '任意'}
+                </span>
+                <span className="text-slate-600 leading-snug">{col.description}</span>
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <p className="text-xs font-medium text-slate-600 mb-1.5">
+              記入例（1行目はヘッダー固定）
+            </p>
+            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+              <table className="min-w-full text-[11px] text-left border-collapse">
+                <thead className="bg-slate-100 text-slate-700 font-mono">
+                  <tr>
+                    {REQUIRED_CSV_HEADERS.map((header) => (
+                      <th
+                        key={header}
+                        className="px-2 py-1.5 border-b border-slate-200 whitespace-nowrap"
+                      >
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {CSV_TEMPLATE_SAMPLE_ROWS.slice(0, 2).map((row, idx) => (
+                    <tr key={idx}>
+                      {REQUIRED_CSV_HEADERS.map((col) => (
+                        <td
+                          key={col}
+                          className="px-2 py-1.5 whitespace-nowrap max-w-[160px] truncate"
+                          title={row[col]}
+                        >
+                          {row[col] || <span className="text-slate-300">（空欄）</span>}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps) {
+  const [activeTab, setActiveTab] = useState<ImportTab>(() => getDefaultImportTab());
+  const [isGuideExpanded, setIsGuideExpanded] = useState<boolean>(() => !isMobileViewport());
   const [title, setTitle] = useState('');
+  const titleManuallyEditedRef = useRef(false);
+
+  // File upload tab state
   const [fileName, setFileName] = useState<string | null>(null);
-  const [questions, setQuestions] = useState<ParsedQuestion[]>([]);
-  const [errors, setErrors] = useState<CsvValidationError[]>([]);
+  const [fileSourceType, setFileSourceType] = useState<QuizUploadSourceType | null>(null);
+  const [fileQuestions, setFileQuestions] = useState<ParsedQuestion[]>([]);
+  const [fileErrors, setFileErrors] = useState<CsvValidationError[]>([]);
   const [sheets, setSheets] = useState<ParsedSheetResult[]>([]);
   const [selectedSheetName, setSelectedSheetName] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [copiedTemplate, setCopiedTemplate] = useState(false);
-  const [downloadingXlsx, setDownloadingXlsx] = useState(false);
   const parseRequestIdRef = useRef(0);
 
-  useEffect(() => {
-    if (!copiedTemplate) return;
-    const timer = window.setTimeout(() => setCopiedTemplate(false), 2000);
-    return () => window.clearTimeout(timer);
-  }, [copiedTemplate]);
+  // Text paste tab state
+  const [pastedText, setPastedText] = useState('');
+  const [pasteFormat, setPasteFormat] = useState<'json' | 'csv' | null>(null);
+  const [pasteQuestions, setPasteQuestions] = useState<ParsedQuestion[]>([]);
+  const [pasteErrors, setPasteErrors] = useState<CsvValidationError[]>([]);
+  const [clipboardNotice, setClipboardNotice] = useState<string | null>(null);
 
-  if (!isOpen) return null;
+  // Shared save / helper state
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [copiedTemplate, triggerCopiedTemplate, clearCopiedTemplate] = useTransientFlag(2000);
+  const [copiedPrompt, triggerCopiedPrompt, clearCopiedPrompt] = useTransientFlag(2000);
+  const [promptPreviewOpen, setPromptPreviewOpen] = useState(false);
+  const [promptFallbackNotice, setPromptFallbackNotice] = useState<string | null>(null);
+  const [downloadingXlsx, setDownloadingXlsx] = useState(false);
 
-  const resetState = () => {
+  const resetState = useCallback(() => {
     parseRequestIdRef.current += 1;
+    titleManuallyEditedRef.current = false;
+    setActiveTab(getDefaultImportTab());
+    setIsGuideExpanded(!isMobileViewport());
     setTitle('');
     setFileName(null);
-    setQuestions([]);
-    setErrors([]);
+    setFileSourceType(null);
+    setFileQuestions([]);
+    setFileErrors([]);
     setSheets([]);
     setSelectedSheetName(null);
     setParsing(false);
+    setIsDragging(false);
+    setPastedText('');
+    setPasteFormat(null);
+    setPasteQuestions([]);
+    setPasteErrors([]);
+    setClipboardNotice(null);
     setSaveError(null);
     setSaving(false);
-    setCopiedTemplate(false);
+    clearCopiedTemplate();
+    clearCopiedPrompt();
+    setPromptPreviewOpen(false);
+    setPromptFallbackNotice(null);
     setDownloadingXlsx(false);
-  };
+  }, [clearCopiedPrompt, clearCopiedTemplate]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      resetState();
+      return;
+    }
+    setActiveTab(getDefaultImportTab());
+    setIsGuideExpanded(!isMobileViewport());
+  }, [isOpen, resetState]);
+
+  if (!isOpen) return null;
 
   const handleClose = () => {
     resetState();
     onClose();
   };
 
+  const handleTitleChange = (nextTitle: string) => {
+    setTitle(nextTitle);
+    titleManuallyEditedRef.current = nextTitle.trim().length > 0;
+  };
+
   const handleCopyTemplate = async () => {
-    const content = buildCsvTemplateContent();
-    try {
-      await navigator.clipboard?.writeText(content);
-      setCopiedTemplate(true);
-    } catch {
-      // Clipboard API may be unavailable or denied in some contexts.
+    const ok = await copyTextToClipboard(buildCsvTemplateContent());
+    if (ok) {
+      triggerCopiedTemplate();
     }
+  };
+
+  const handleCopyPrompt = async () => {
+    const ok = await copyTextToClipboard(CHATGPT_PROJECT_PROMPT);
+    if (ok) {
+      setPromptFallbackNotice(null);
+      triggerCopiedPrompt();
+      return;
+    }
+    setPromptPreviewOpen(true);
+    setPromptFallbackNotice(
+      '自動コピーできない場合は、下のプロンプト本文をすべて選択してコピーしてください。',
+    );
   };
 
   const handleDownloadXlsxTemplate = async () => {
@@ -100,26 +433,86 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
     if (!matched) return;
     setSelectedSheetName(matched.name);
     if (matched.result.ok) {
-      setQuestions(matched.result.questions);
-      setErrors([]);
+      setFileQuestions(matched.result.questions);
+      setFileErrors([]);
     } else {
-      setQuestions([]);
-      setErrors(matched.result.errors);
+      setFileQuestions([]);
+      setFileErrors(matched.result.errors);
+    }
+  };
+
+  const applyPastedText = (nextText: string) => {
+    setPastedText(nextText);
+    setSaveError(null);
+
+    if (!nextText.trim()) {
+      setPasteFormat(null);
+      setPasteQuestions([]);
+      setPasteErrors([]);
+      return;
+    }
+
+    const result = parseQuizTextInput(nextText);
+    setPasteFormat(result.format);
+
+    if (
+      result.format === 'json' &&
+      result.suggestedTitle &&
+      !titleManuallyEditedRef.current &&
+      title.trim() === ''
+    ) {
+      setTitle(result.suggestedTitle);
+    }
+
+    if (result.ok) {
+      setPasteQuestions(result.questions);
+      setPasteErrors([]);
+    } else {
+      setPasteQuestions([]);
+      setPasteErrors(result.errors);
+    }
+  };
+
+  const handlePasteFromClipboard = async () => {
+    setClipboardNotice(null);
+    if (typeof navigator === 'undefined' || typeof navigator.clipboard?.readText !== 'function') {
+      setClipboardNotice('自動読み取りに対応していません。下の入力欄を長押しして「ペースト」してください。');
+      return;
+    }
+
+    try {
+      const clipText = await navigator.clipboard.readText();
+      if (!clipText.trim()) {
+        setClipboardNotice('クリップボードが空です。ChatGPTの回答をコピーしてからもう一度お試しください。');
+        return;
+      }
+      applyPastedText(clipText);
+    } catch {
+      setClipboardNotice('自動読み取りが許可されていません。下の入力欄を長押しして「ペースト」してください。');
     }
   };
 
   const processFile = async (file: File) => {
     const requestId = ++parseRequestIdRef.current;
+    const lowerName = file.name.trim().toLowerCase();
+    const isJsonFile =
+      lowerName.endsWith('.json') ||
+      file.type === 'application/json' ||
+      file.type === 'text/json';
+    const filenameTitle = stripQuizFileExtension(file.name);
+
     setFileName(file.name);
+    setFileSourceType(isJsonFile ? 'json' : null);
     setSaveError(null);
     setParsing(true);
-    setQuestions([]);
-    setErrors([]);
+    setFileQuestions([]);
+    setFileErrors([]);
     setSheets([]);
     setSelectedSheetName(null);
 
-    const defaultTitle = file.name.replace(/\.(csv|xlsx|xls)$/i, '');
-    setTitle(defaultTitle);
+    if (!isJsonFile && !titleManuallyEditedRef.current) {
+      setTitle(filenameTitle);
+    }
 
     try {
       const result = await parseQuizUploadFile(file);
@@ -128,23 +521,31 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
       }
 
       setParsing(false);
+      setFileSourceType(result.sourceType);
       setSheets(result.sheets);
       setSelectedSheetName(result.selectedSheetName);
 
+      if (result.sourceType === 'json' && !titleManuallyEditedRef.current) {
+        setTitle(result.suggestedTitle || filenameTitle);
+      }
+
       if (result.ok) {
-        setQuestions(result.questions);
-        setErrors([]);
+        setFileQuestions(result.questions);
+        setFileErrors([]);
       } else {
-        setQuestions([]);
-        setErrors(result.errors);
+        setFileQuestions([]);
+        setFileErrors(result.errors);
       }
     } catch (err) {
       if (requestId !== parseRequestIdRef.current) {
         return;
       }
       setParsing(false);
-      setQuestions([]);
-      setErrors([
+      setFileQuestions([]);
+      if (isJsonFile && !titleManuallyEditedRef.current) {
+        setTitle(filenameTitle);
+      }
+      setFileErrors([
         {
           row: 1,
           message:
@@ -163,11 +564,17 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
     }
   };
 
+  const activeParsing = activeTab === 'file' ? parsing : false;
+  const activeQuestions = activeTab === 'paste' ? pasteQuestions : fileQuestions;
+  const activeErrors = activeTab === 'paste' ? pasteErrors : fileErrors;
+  const activeSourceFormat = activeTab === 'paste' ? pasteFormat : fileSourceType;
+  const rowLabelUnit = activeSourceFormat === 'json' ? '問目' : '行目';
+
   const canSave =
-    !parsing &&
+    !activeParsing &&
     title.trim().length > 0 &&
-    questions.length > 0 &&
-    errors.length === 0 &&
+    activeQuestions.length > 0 &&
+    activeErrors.length === 0 &&
     !saving;
 
   const handleSubmit = async (e: FormEvent) => {
@@ -176,7 +583,7 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
     setSaving(true);
     setSaveError(null);
     try {
-      await onSave(title.trim(), questions);
+      await onSave(title.trim(), activeQuestions);
       resetState();
       onClose();
     } catch (err) {
@@ -187,13 +594,13 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-3 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="csv-upload-title"
     >
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl border border-slate-200 max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl border border-slate-200 max-h-[92vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
           <h2 id="csv-upload-title" className="text-lg font-bold text-slate-900">
             新規問題集アップロード
           </h2>
@@ -207,7 +614,7 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
           <div>
             <label
               htmlFor="quiz-title"
@@ -219,225 +626,221 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
               id="quiz-title"
               type="text"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="例: AWS 基礎問題集"
+              onChange={(e) => handleTitleChange(e.target.value)}
+              placeholder="例: AWS 基礎問題集（JSON貼り付け時は自動入力）"
               className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
 
           <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setIsDragging(true);
-            }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={handleDrop}
-            className={`rounded-xl border-2 border-dashed p-6 text-center transition-colors ${
-              isDragging
-                ? 'border-indigo-500 bg-indigo-50'
-                : 'border-slate-300 bg-slate-50 hover:border-indigo-400'
-            }`}
+            role="tablist"
+            aria-label="問題データの入力方法"
+            className="grid grid-cols-2 gap-1.5 rounded-xl bg-slate-100 p-1"
           >
-            <Upload className="w-8 h-8 text-indigo-500 mx-auto mb-2" />
-            <p className="text-sm font-medium text-slate-700">
-              CSV または Excel（.xlsx）ファイルをドラッグ＆ドロップ
-            </p>
-            <p className="text-xs text-slate-500 mt-1 mb-3">
-              必須ヘッダー: {REQUIRED_CSV_HEADERS.join(', ')}
-            </p>
-            <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-100 cursor-pointer">
-              <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
-              <span>ファイルを選択（.csv / .xlsx）</span>
-              <input
-                type="file"
-                accept={`.csv,text/csv,.xlsx,${XLSX_MIME_TYPE}`}
-                aria-label="ファイルを選択"
-                className="sr-only"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = '';
-                  if (file) {
-                    await processFile(file);
-                  }
-                }}
-              />
-            </label>
-            {fileName && (
-              <p className="mt-2 text-xs text-slate-600">選択中: {fileName}</p>
-            )}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'paste'}
+              onClick={() => setActiveTab('paste')}
+              className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${
+                activeTab === 'paste'
+                  ? 'bg-white text-indigo-700 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ClipboardPaste className="w-4 h-4 shrink-0" />
+              <span>テキストを貼り付け</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'file'}
+              onClick={() => setActiveTab('file')}
+              className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${
+                activeTab === 'file'
+                  ? 'bg-white text-indigo-700 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Upload className="w-4 h-4 shrink-0" />
+              <span>ファイルをアップロード</span>
+            </button>
           </div>
 
-          {sheets.length > 1 && (
-            <div>
-              <label
-                htmlFor="xlsx-sheet-select"
-                className="block text-sm font-medium text-slate-700 mb-1"
+          {activeTab === 'paste' ? (
+            <div role="tabpanel" aria-label="テキストを貼り付け" className="space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handlePasteFromClipboard();
+                  }}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 text-sm font-semibold transition-colors cursor-pointer"
+                >
+                  <ClipboardPaste className="w-4 h-4" />
+                  <span>クリップボードから貼り付け</span>
+                </button>
+                {pastedText && (
+                  <button
+                    type="button"
+                    onClick={() => applyPastedText('')}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 cursor-pointer"
+                  >
+                    入力をクリア
+                  </button>
+                )}
+              </div>
+
+              {clipboardNotice && (
+                <p className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                  {clipboardNotice}
+                </p>
+              )}
+
+              <div>
+                <label
+                  htmlFor="quiz-paste-input"
+                  className="block text-sm font-medium text-slate-700 mb-1"
+                >
+                  問題データ（JSON / CSV テキスト）
+                </label>
+                <textarea
+                  id="quiz-paste-input"
+                  rows={6}
+                  value={pastedText}
+                  onChange={(e) => applyPastedText(e.target.value)}
+                  placeholder={
+                    'ChatGPT の回答をそのまま貼り付けてください（前後の文章や ```json / ```csv ごとでも取り込めます）'
+                  }
+                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-xs sm:text-sm font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+          ) : (
+            <div role="tabpanel" aria-label="ファイルをアップロード" className="space-y-3">
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragging(true);
+                }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={handleDrop}
+                className={`rounded-xl border-2 border-dashed p-5 sm:p-6 text-center transition-colors ${
+                  isDragging
+                    ? 'border-indigo-500 bg-indigo-50'
+                    : 'border-slate-300 bg-slate-50 hover:border-indigo-400'
+                }`}
               >
-                読み込むシート
-              </label>
-              <select
-                id="xlsx-sheet-select"
-                value={selectedSheetName ?? ''}
-                onChange={(e) => handleSheetChange(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                {sheets.map((sheet) => (
-                  <option key={sheet.name} value={sheet.name}>
-                    {sheet.name}（
-                    {sheet.result.ok
-                      ? `${sheet.result.questions.length}問`
-                      : '形式未一致'}
-                    ）
-                  </option>
-                ))}
-              </select>
+                <Upload className="w-8 h-8 text-indigo-500 mx-auto mb-2" />
+                <p className="text-sm font-medium text-slate-700">
+                  CSV、Excel（.xlsx）、JSON（.json）ファイルをドラッグ＆ドロップ
+                </p>
+                <p className="text-xs text-slate-500 mt-1 mb-3">
+                  必須項目: {REQUIRED_CSV_HEADERS.join(', ')}
+                </p>
+                <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-100 cursor-pointer">
+                  <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
+                  <span>ファイルを選択（.csv / .xlsx / .json）</span>
+                  <input
+                    type="file"
+                    accept={`.csv,text/csv,.xlsx,${XLSX_MIME_TYPE},.json,application/json`}
+                    aria-label="ファイルを選択"
+                    className="sr-only"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (file) {
+                        await processFile(file);
+                      }
+                    }}
+                  />
+                </label>
+                {fileName && (
+                  <p className="mt-2 text-xs text-slate-600">選択中: {fileName}</p>
+                )}
+              </div>
+
+              {sheets.length > 1 && (
+                <div>
+                  <label
+                    htmlFor="xlsx-sheet-select"
+                    className="block text-sm font-medium text-slate-700 mb-1"
+                  >
+                    読み込むシート
+                  </label>
+                  <select
+                    id="xlsx-sheet-select"
+                    value={selectedSheetName ?? ''}
+                    onChange={(e) => handleSheetChange(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {sheets.map((sheet) => (
+                      <option key={sheet.name} value={sheet.name}>
+                        {sheet.name}（
+                        {sheet.result.ok
+                          ? `${sheet.result.questions.length}問`
+                          : '形式未一致'}
+                        ）
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           )}
 
-          {parsing && (
+          {activeParsing && (
             <div className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 text-sm text-slate-600">
               ファイルを読み込み中...
             </div>
           )}
 
-          {errors.length > 0 && (
+          {activeErrors.length > 0 && (
             <div
               role="alert"
               className="rounded-xl bg-rose-50 border border-rose-200 p-3.5 space-y-2"
             >
               <div className="flex items-center gap-2 text-sm font-semibold text-rose-800">
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>読み込みエラーがあります（{errors.length}件）</span>
+                <span>読み込みエラーがあります（{activeErrors.length}件）</span>
               </div>
               <ul className="text-xs text-rose-700 space-y-1 max-h-40 overflow-y-auto list-disc list-inside">
-                {errors.map((err, idx) => (
+                {activeErrors.map((err, idx) => (
                   <li key={`${err.row}-${idx}`}>
-                    {err.row}行目: {err.message}
+                    {err.row}
+                    {rowLabelUnit}: {err.message}
                   </li>
                 ))}
               </ul>
             </div>
           )}
 
-          {questions.length > 0 && errors.length === 0 && (
+          {activeQuestions.length > 0 && activeErrors.length === 0 && (
             <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3.5 flex items-center gap-2 text-sm text-emerald-800">
               <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
-              <span>{questions.length}問の問題を読み込みました。</span>
+              <span>{activeQuestions.length}問の問題を読み込みました。</span>
             </div>
           )}
 
-          <section
-            aria-label="鋳型（テンプレート）と書き方"
-            className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3"
-          >
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800">
-                  鋳型（テンプレート）と書き方
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  見本ファイルをダウンロードして書き換えるとすぐ作成できます（.xlsx / CSV UTF-8・Shift-JIS 対応）
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  disabled={downloadingXlsx}
-                  onClick={() => {
-                    void handleDownloadXlsxTemplate();
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-indigo-200 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-60 cursor-pointer"
-                >
-                  <FileSpreadsheet className="w-3.5 h-3.5" />
-                  <span>
-                    {downloadingXlsx
-                      ? 'Excel作成中...'
-                      : 'テンプレートExcel（.xlsx）をダウンロード'}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={downloadCsvTemplate}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>テンプレートCSVをダウンロード</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCopyTemplate}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-xs font-medium text-slate-700 hover:bg-slate-100 cursor-pointer"
-                >
-                  {copiedTemplate ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-600" />
-                      <span className="text-emerald-700">コピーしました</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>サンプルCSVをコピー</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
-              {CSV_COLUMN_GUIDES.map((col) => (
-                <div
-                  key={col.name}
-                  className="flex items-start gap-2 rounded-lg bg-white border border-slate-200/80 px-2.5 py-1.5"
-                >
-                  <code className="font-mono font-semibold text-indigo-700 shrink-0">
-                    {col.name}
-                  </code>
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${
-                      col.required
-                        ? 'bg-rose-50 text-rose-700'
-                        : 'bg-slate-100 text-slate-600'
-                    }`}
-                  >
-                    {col.required ? '必須' : '任意'}
-                  </span>
-                  <span className="text-slate-600 leading-snug">{col.description}</span>
-                </div>
-              ))}
-            </div>
-
-            <div>
-              <p className="text-xs font-medium text-slate-600 mb-1.5">記入例（1行目はヘッダー固定）</p>
-              <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-                <table className="min-w-full text-[11px] text-left border-collapse">
-                  <thead className="bg-slate-100 text-slate-700 font-mono">
-                    <tr>
-                      {REQUIRED_CSV_HEADERS.map((header) => (
-                        <th key={header} className="px-2 py-1.5 border-b border-slate-200 whitespace-nowrap">
-                          {header}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-700">
-                    {CSV_TEMPLATE_SAMPLE_ROWS.slice(0, 2).map((row, idx) => (
-                      <tr key={idx}>
-                        {REQUIRED_CSV_HEADERS.map((col) => (
-                          <td
-                            key={col}
-                            className="px-2 py-1.5 whitespace-nowrap max-w-[160px] truncate"
-                            title={row[col]}
-                          >
-                            {row[col] || <span className="text-slate-300">（空欄）</span>}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </section>
+          <TemplateGuideSection
+            copiedPrompt={copiedPrompt}
+            copiedTemplate={copiedTemplate}
+            downloadingXlsx={downloadingXlsx}
+            promptPreviewOpen={promptPreviewOpen}
+            promptFallbackNotice={promptFallbackNotice}
+            isGuideExpanded={isGuideExpanded}
+            onCopyPrompt={() => {
+              void handleCopyPrompt();
+            }}
+            onTogglePromptPreview={() => setPromptPreviewOpen((prev) => !prev)}
+            onToggleGuide={() => setIsGuideExpanded((prev) => !prev)}
+            onDownloadXlsxTemplate={() => {
+              void handleDownloadXlsxTemplate();
+            }}
+            onCopyTemplate={() => {
+              void handleCopyTemplate();
+            }}
+          />
 
           {saveError && (
             <p role="alert" className="text-sm text-rose-600">
@@ -445,7 +848,7 @@ export function CsvUploadModal({ isOpen, onClose, onSave }: CsvUploadModalProps)
             </p>
           )}
 
-          <div className="flex items-center justify-end gap-3 pt-2">
+          <div className="sticky bottom-0 bg-white flex items-center justify-end gap-3 pt-3 pb-1 border-t border-slate-100">
             <button
               type="button"
               onClick={handleClose}
