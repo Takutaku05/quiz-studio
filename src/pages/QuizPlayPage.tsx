@@ -76,6 +76,22 @@ export function QuizPlayPage() {
   // and the final delete always runs after every pending save.
   const sessionWriteQueue = useRef<Promise<void>>(Promise.resolve());
 
+  // After a choice is picked, bring the "次へ" button into view so small screens
+  // don't have to scroll down past the explanation by hand.
+  const nextButtonRef = useRef<HTMLButtonElement>(null);
+  const [scrollToNextRequest, setScrollToNextRequest] = useState(0);
+
+  useEffect(() => {
+    if (scrollToNextRequest === 0) return;
+    const button = nextButtonRef.current;
+    if (!button || typeof button.scrollIntoView !== 'function') return;
+    const prefersReducedMotion =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // 'nearest' leaves the page alone when the button is already visible (e.g. on desktop).
+    button.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'nearest' });
+  }, [scrollToNextRequest]);
+
   useEffect(() => {
     let active = true;
     async function load() {
@@ -252,6 +268,7 @@ export function QuizPlayPage() {
       [currentQuestion.source.id]: choice.originalNumber,
     };
     setAnswers(nextAnswers);
+    setScrollToNextRequest((prev) => prev + 1);
 
     // One-by-one: the answer is final the moment it is picked.
     if (mode === 'one_by_one' && activeSettings) {
@@ -540,9 +557,10 @@ export function QuizPlayPage() {
 
               {(hasAnsweredCurrent || skippedCurrent) && (
                 <button
+                  ref={nextButtonRef}
                   type="button"
                   onClick={handleNext}
-                  className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 transition-colors cursor-pointer"
+                  className="w-full scroll-mb-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 transition-colors cursor-pointer"
                 >
                   {currentIndex + 1 < preparedQuestions.length
                     ? '次へ'
