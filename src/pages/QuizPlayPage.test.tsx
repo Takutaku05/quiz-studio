@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppProvider } from '../context/AppContext';
 import {
   LocalAuthRepository,
@@ -136,6 +136,58 @@ describe('Bolt 05: QuizPlayPage', () => {
     await user.click(screen.getByRole('button', { name: 'ダッシュボードへ戻る' }));
     await waitFor(() => {
       expect(screen.getByText('Dashboard Screen')).toBeInTheDocument();
+    });
+  });
+
+  describe('auto-scroll to the next button', () => {
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    afterEach(() => {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    });
+
+    function spyScrollIntoView() {
+      const calls: Array<{ element: Element; options: unknown }> = [];
+      Element.prototype.scrollIntoView = vi.fn(function (this: Element, options?: unknown) {
+        calls.push({ element: this, options });
+      });
+      return calls;
+    }
+
+    it('scrolls the next button into view after a choice is picked in one-by-one mode', async () => {
+      const calls = spyScrollIntoView();
+      const user = userEvent.setup();
+      await setupQuizPlay();
+      await screen.findByRole('heading', { level: 1, name: 'サンプルテスト' });
+      await user.click(screen.getByRole('button', { name: 'スタート' }));
+      expect(calls).toHaveLength(0);
+
+      await user.click(screen.getByRole('button', { name: 'いいえ' }));
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].element).toBe(screen.getByRole('button', { name: '次へ' }));
+      expect(calls[0].options).toMatchObject({ block: 'nearest' });
+
+      // Moving on alone must not scroll; the next pick does.
+      await user.click(screen.getByRole('button', { name: '次へ' }));
+      expect(calls).toHaveLength(1);
+      await user.click(screen.getByRole('button', { name: 'ミカン' }));
+      expect(calls).toHaveLength(2);
+      expect(calls[1].element).toBe(screen.getByRole('button', { name: '結果を見る' }));
+    });
+
+    it('scrolls the next button into view on each pick in test mode', async () => {
+      const calls = spyScrollIntoView();
+      const user = userEvent.setup();
+      await setupQuizPlay();
+      await screen.findByRole('heading', { level: 1, name: 'サンプルテスト' });
+      await user.click(screen.getByLabelText(/テストモード/));
+      await user.click(screen.getByRole('button', { name: 'スタート' }));
+
+      await user.click(screen.getByRole('button', { name: 'いいえ' }));
+      await user.click(screen.getByRole('button', { name: 'はい' }));
+
+      expect(calls).toHaveLength(2);
+      expect(calls.every((c) => c.element === screen.getByRole('button', { name: '次へ' }))).toBe(true);
     });
   });
 
