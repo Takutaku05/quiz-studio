@@ -56,7 +56,7 @@ function choiceTexts(): string[] {
   return within(question)
     .getAllByRole('button')
     .map((b) => b.textContent ?? '')
-    .filter((t) => t !== '次へ' && t !== '結果を見る');
+    .filter((t) => t !== '次へ' && t !== '結果を見る' && t !== 'スキップ');
 }
 
 describe('Bolt 12: QuizPlayPage study history & resume', () => {
@@ -112,6 +112,82 @@ describe('Bolt 12: QuizPlayPage study history & resume', () => {
         currentIndex: 1,
         answers: { [q1]: 1 },
       });
+    });
+  });
+
+  it('records a skip in one-by-one mode as wrong and reveals the answer without a pick', async () => {
+    const fx = await createFixture();
+    const ue = userEvent.setup();
+    renderPlay(fx);
+    await waitForSetup();
+
+    await ue.click(screen.getByRole('button', { name: 'スタート' }));
+    expect(screen.queryByRole('button', { name: '次へ' })).not.toBeInTheDocument();
+    await ue.click(screen.getByRole('button', { name: 'スキップ' }));
+
+    expect(screen.getByText('スキップしました（不正解として記録）')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'スキップ' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'はい' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'はい' }).className).toContain('emerald');
+
+    const q1 = fx.quiz.questions[0].id;
+    await waitFor(async () => {
+      expect(await fx.studyRepo.listStats(fx.user.id, fx.quiz.id)).toEqual([
+        expect.objectContaining({ questionId: q1, attemptsCount: 1, correctCount: 0, lastIsCorrect: false }),
+      ]);
+    });
+    await waitFor(async () => {
+      expect(await fx.studyRepo.getSession(fx.user.id, fx.quiz.id)).toMatchObject({
+        currentIndex: 1,
+        answers: {},
+      });
+    });
+
+    await ue.click(screen.getByRole('button', { name: '次へ' }));
+    expect(screen.getByText('2 / 2')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'スキップ' })).toBeInTheDocument();
+    await ue.click(screen.getByRole('button', { name: 'ミカン' }));
+    await ue.click(screen.getByRole('button', { name: '結果を見る' }));
+
+    expect(await screen.findByText('1 / 2')).toBeInTheDocument();
+    expect(screen.getByText('スキップ', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText('スキップ（未回答）')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /間違えた問題だけ解く/ })).toBeInTheDocument();
+  });
+
+  it('skips in test mode by discarding the tentative pick and moving on', async () => {
+    const fx = await createFixture();
+    const ue = userEvent.setup();
+    renderPlay(fx);
+    await waitForSetup();
+
+    await ue.click(screen.getByLabelText(/テストモード/));
+    await ue.click(screen.getByRole('button', { name: 'スタート' }));
+    // A tentative (possibly lucky) pick must not count once the user skips.
+    await ue.click(screen.getByRole('button', { name: 'はい' }));
+    await ue.click(screen.getByRole('button', { name: 'スキップ' }));
+
+    expect(screen.getByText('2 / 2')).toBeInTheDocument();
+    const q1 = fx.quiz.questions[0].id;
+    await waitFor(async () => {
+      expect(await fx.studyRepo.listStats(fx.user.id, fx.quiz.id)).toEqual([
+        expect.objectContaining({ questionId: q1, attemptsCount: 1, correctCount: 0, lastIsCorrect: false }),
+      ]);
+    });
+    await waitFor(async () => {
+      expect(await fx.studyRepo.getSession(fx.user.id, fx.quiz.id)).toMatchObject({
+        mode: 'test',
+        currentIndex: 1,
+        answers: {},
+      });
+    });
+
+    await ue.click(screen.getByRole('button', { name: 'スキップ' }));
+
+    expect(await screen.findByText('0 / 2')).toBeInTheDocument();
+    expect(screen.getAllByText('スキップ（未回答）')).toHaveLength(2);
+    await waitFor(async () => {
+      expect(await fx.studyRepo.getSession(fx.user.id, fx.quiz.id)).toBeNull();
     });
   });
 
