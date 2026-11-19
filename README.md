@@ -29,41 +29,12 @@ CSV / Excel / JSON や生成AI（ChatGPT）の出力テキストから問題集�
 
 自前のアプリケーションサーバーを持たず、フロントエンド（SPA）が Repository 抽象化層を介して **Supabase（BaaS）** または **`localStorage`（ローカル/テスト用）** に接続するサーバーレス構成です。
 
-```mermaid
-flowchart TB
-    subgraph Edge["ホスティング / CDN（Cloudflare）"]
-        CF["Cloudflare Workers Static Assets<br/>(wrangler.jsonc / dist/ + SPA フォールバック)"]
-    end
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture/stack-diagram-dark.png">
+  <img src="docs/architecture/stack-diagram.png" alt="Quiz Studio の技術スタック図：ユーザーは HTTPS で Cloudflare Workers から SPA を受け取り、ブラウザ上の UI 層・ドメイン層・リポジトリ層を経由して Supabase（PostgreSQL / Auth、Google OAuth）または localStorage に接続する。Vite・TypeScript・Vitest・GitHub Actions でビルド・テストし、Wrangler でデプロイする。">
+</picture>
 
-    subgraph Client["フロントエンド SPA（Browser）"]
-        direction TB
-        UI["UI / ルーティング層<br/>React 19 + TypeScript 5.8<br/>React Router v7 / Tailwind CSS v4 / Lucide React"]
-        Domain["ドメイン / パーサー層（src/domain/）<br/>QuizEngine / StudyFilters / QuizSession<br/>PapaParse (CSV) / read-excel-file & write-excel-file (.xlsx) / qrcode (SVG)"]
-        Repo["リポジトリ抽象化層（src/repositories/）<br/>AuthRepository / QuizRepository / StudyRepository"]
-
-        UI --> Domain
-        UI --> Repo
-    end
-
-    subgraph Backend["認証・データ永続化（環境変数で自動切替）"]
-        direction LR
-        subgraph Supa["Supabase（本番 / VITE_SUPABASE_* 設定時）"]
-            SupaAuth["Supabase Auth<br/>Email / Google OAuth / Passkeys (WebAuthn)"]
-            SupaDB["PostgreSQL + RLS + RPC<br/>quizzes / questions / quiz_shares /<br/>quiz_share_imports / question_stats / quiz_sessions"]
-        end
-        Local["localStorage（未設定時・テスト時フォールバック）<br/>LocalAuthRepository / LocalQuizRepository / LocalStudyRepository"]
-    end
-
-    subgraph Tooling["ビルド・テスト・CI"]
-        Build["Vite 6 + TypeScript (tsc -b)<br/>Vitest 3 + Testing Library + jsdom<br/>GitHub Actions CI / Wrangler 4"]
-    end
-
-    CF --> Client
-    Repo -- "@supabase/supabase-js" --> SupaAuth
-    Repo -- "@supabase/supabase-js" --> SupaDB
-    Repo -- "Fallback" --> Local
-    Tooling -. "Build & Deploy" .-> CF
-```
+> 図の正本は [`docs/architecture/stack-diagram.html`](docs/architecture/stack-diagram.html)（自己完結 HTML）。PNG はそこからヘッドレス Chromium で書き出しています。
 
 ### 使用ライブラリ・ツール一覧
 
