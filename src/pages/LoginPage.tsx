@@ -97,6 +97,22 @@ export function LoginPage() {
     };
   }, [pendingShareToken, quizRepository]);
 
+  // Google OAuth はリダイレクトで画面遷移するため、成功時は pendingMethod を解除しない。
+  // しかし OAuth 画面から「戻る」でブラウザが bfcache からページを復元すると
+  // React の状態がそのまま残り、全ログインボタンが disabled のままになってしまう。
+  // pageshow の persisted=true（bfcache 復元）を検知して保留状態をリセットする。
+  useEffect(() => {
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        setPendingMethod(null);
+      }
+    };
+    window.addEventListener('pageshow', handlePageShow);
+    return () => {
+      window.removeEventListener('pageshow', handlePageShow);
+    };
+  }, []);
+
   const submitting = pendingMethod !== null;
   const displayError = error ?? authError;
 

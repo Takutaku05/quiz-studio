@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -76,6 +76,41 @@ describe('Bolt 04 & 06: LoginPage', () => {
 
     expect(mockAuthRepo.signInWithGoogle).toHaveBeenCalledTimes(1);
     expect(await screen.findByText('Google認証に失敗しました。')).toBeInTheDocument();
+  });
+
+  it('re-enables login buttons when the page is restored from bfcache during Google redirect', async () => {
+    const user = userEvent.setup();
+    const baseRepo = new LocalAuthRepository();
+    const mockAuthRepo: AuthRepository = {
+      getCurrentUser: () => baseRepo.getCurrentUser(),
+      signUp: (e, p) => baseRepo.signUp(e, p),
+      signIn: (e, p) => baseRepo.signIn(e, p),
+      signOut: () => baseRepo.signOut(),
+      // 成功時はリダイレクトされる想定のため pendingMethod は解除されない
+      signInWithGoogle: vi.fn().mockResolvedValue(undefined),
+    };
+
+    renderLogin(['/login'], mockAuthRepo);
+
+    await user.click(await screen.findByRole('button', { name: /Googleでログイン/ }));
+    expect(
+      await screen.findByRole('button', { name: /Googleへリダイレクト中/ }),
+    ).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'ログイン' })).toBeDisabled();
+
+    // 通常の pageshow（bfcache 以外）では状態を変えない
+    act(() => {
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: false }));
+    });
+    expect(screen.getByRole('button', { name: /Googleへリダイレクト中/ })).toBeDisabled();
+
+    // bfcache からの復元では保留状態をリセットしてボタンを再操作可能にする
+    act(() => {
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    });
+
+    expect(await screen.findByRole('button', { name: /Googleでログイン/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'ログイン' })).toBeEnabled();
   });
 
   it('displays OAuth redirect error from URL and clears error params', async () => {
