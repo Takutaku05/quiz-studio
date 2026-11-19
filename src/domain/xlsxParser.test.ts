@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import writeXlsxFile, { type Sheet, type SheetData } from 'write-excel-file/universal';
 import { readFileAsArrayBuffer } from './csvParser';
-import { parseQuizUploadFile, parseXlsxBuffer, parseXlsxSheetData } from './xlsxParser';
+import {
+  MAX_UPLOAD_FILE_SIZE_BYTES,
+  parseQuizUploadFile,
+  parseXlsxBuffer,
+  parseXlsxSheetData,
+} from './xlsxParser';
 
 async function buildXlsxFile(
   sheets: Sheet<Blob>[],
@@ -202,5 +207,17 @@ describe('xlsxParser', () => {
     expect(brokenResult.ok).toBe(false);
     expect(brokenResult.sourceType).toBe('json');
     expect(brokenResult.errors[0].message).toContain('JSON');
+  });
+
+  it('rejects files larger than MAX_UPLOAD_FILE_SIZE_BYTES before reading contents', async () => {
+    const oversizedBytes = new Uint8Array(MAX_UPLOAD_FILE_SIZE_BYTES + 1);
+    const largeXlsx = new File([oversizedBytes], 'huge.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+
+    const result = await parseQuizUploadFile(largeXlsx);
+    expect(result.ok).toBe(false);
+    expect(result.sourceType).toBe('xlsx');
+    expect(result.errors[0].message).toContain('5MB');
   });
 });

@@ -133,7 +133,7 @@ describe('App route protection & auth state sync', () => {
     expect(
       await screen.findByText(/ログインまたは新規登録すると自動でインポートされます/),
     ).toBeInTheDocument();
-    expect(screen.getByText('友だち共有クイズ')).toBeInTheDocument();
+    expect(await screen.findByText('友だち共有クイズ')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '新規登録はこちら' }));
     await user.type(screen.getByLabelText('メールアドレス'), 'friend@example.com');
@@ -143,7 +143,7 @@ describe('App route protection & auth state sync', () => {
     expect(
       await screen.findByText('「友だち共有クイズ」（1問）をマイ問題集にインポートしました。'),
     ).toBeInTheDocument();
-    expect(screen.getByText('友だち共有クイズ')).toBeInTheDocument();
+    expect(await screen.findByText('友だち共有クイズ')).toBeInTheDocument();
   });
 
   it('auto-imports shared quiz after signing in via existing account or Google OAuth callback', async () => {

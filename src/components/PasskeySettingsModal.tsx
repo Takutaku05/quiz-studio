@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { KeyRound, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { PasskeyCredential } from '../domain/types';
 import type { AuthRepository } from '../repositories/types';
@@ -27,56 +27,128 @@ export function PasskeySettingsModal({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
+
   const webAuthnSupported = authRepository.isPasskeySupported
     ? authRepository.isPasskeySupported()
     : true;
+  const isBusy = registering || savingRename || deletingId !== null;
 
-  const loadPasskeys = useCallback(async () => {
-    if (!authRepository.listPasskeys) {
-      setUnavailableMessage('パスキー認証はこの認証設定では利用できません。');
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setUnavailableMessage(null);
-    try {
-      const list = await authRepository.listPasskeys();
-      setPasskeys(list);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'パスキー一覧の取得に失敗しました。';
-      if (msg.includes('Supabase連携時のみ')) {
-        setUnavailableMessage(msg);
-      } else {
-        setError(msg);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [authRepository]);
+  const handleSafeClose = useCallback(() => {
+    if (isBusy) return;
+    onClose();
+  }, [isBusy, onClose]);
 
   useEffect(() => {
     if (!isOpen) return;
+    let active = true;
     setNotice(null);
     setError(null);
+    setFriendlyName('');
     setEditingId(null);
+    setEditingName('');
     setConfirmDeleteId(null);
+
+    async function loadPasskeys() {
+      if (!authRepository.listPasskeys) {
+        if (active) {
+          setUnavailableMessage('パスキー認証はこの認証設定では利用できません。');
+        }
+        return;
+      }
+      setLoading(true);
+      setUnavailableMessage(null);
+      try {
+        const list = await authRepository.listPasskeys();
+        if (active) {
+          setPasskeys(list);
+        }
+      } catch (err) {
+        if (!active) return;
+        const msg = err instanceof Error ? err.message : 'パスキー一覧の取得に失敗しました。';
+        if (msg.includes('Supabase連携時のみ')) {
+          setUnavailableMessage(msg);
+        } else {
+          setError(msg);
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    }
+
     void loadPasskeys();
-  }, [isOpen, loadPasskeys]);
+    return () => {
+      active = false;
+    };
+  }, [isOpen, authRepository]);
+
+  useEffect(() => {
+    if (isOpen) {
+      if (!wasOpenRef.current) {
+        previousFocusRef.current =
+          document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        wasOpenRef.current = true;
+      }
+      closeButtonRef.current?.focus();
+    } else if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      previousFocusRef.current?.focus();
+      previousFocusRef.current = null;
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (isBusy) return;
+        if (editingId !== null) {
+          setEditingId(null);
+          setEditingName('');
+          return;
+        }
+        if (confirmDeleteId !== null) {
+          setConfirmDeleteId(null);
+          return;
+        }
         onClose();
+        return;
+      }
+
+      if (e.key === 'Tab' && dialogRef.current) {
+        const focusable = Array.from(
+          dialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, isBusy, editingId, confirmDeleteId, onClose]);
 
   if (!isOpen) return null;
 
-  const canRegister = !unavailableMessage && webAuthnSupported && !registering && Boolean(authRepository.registerPasskey);
+  const canRegister =
+    !unavailableMessage &&
+    webAuthnSupported &&
+    !isBusy &&
+    Boolean(authRepository.registerPasskey);
 
   const handleRegister = async (e: FormEvent) => {
     e.preventDefault();
@@ -84,11 +156,18 @@ export function PasskeySettingsModal({
     setError(null);
     setNotice(null);
     setRegistering(true);
+    const requestedName = friendlyName.trim();
     try {
       const created = await authRepository.registerPasskey(friendlyName);
       setFriendlyName('');
       setPasskeys((prev) => [...prev, created]);
-      setNotice('パスキーを登録しました。次回からパスキーでログインできます。');
+      if (requestedName && !created.friendlyName) {
+        setNotice(
+          'パスキーを登録しましたが、表示名の設定に失敗しました。一覧の「名前変更」から設定できます。',
+        );
+      } else {
+        setNotice('パスキーを登録しました。次回からパスキーでログインできます。');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'パスキーの登録に失敗しました。');
     } finally {
@@ -137,11 +216,16 @@ export function PasskeySettingsModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="passkey-settings-title"
+      onClick={handleSafeClose}
     >
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl border border-slate-200 max-h-[90vh] flex flex-col">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="passkey-settings-title"
+        className="w-full max-w-lg bg-white rounded-2xl shadow-xl border border-slate-200 max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <KeyRound className="w-5 h-5 text-indigo-600" />
@@ -150,10 +234,12 @@ export function PasskeySettingsModal({
             </h2>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
-            onClick={onClose}
+            disabled={isBusy}
+            onClick={handleSafeClose}
             aria-label="閉じる"
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
           >
             <X className="w-5 h-5" />
           </button>
@@ -245,9 +331,16 @@ export function PasskeySettingsModal({
                       className="rounded-xl border border-slate-200 p-3.5 space-y-2.5"
                     >
                       {isEditing ? (
-                        <div className="flex flex-col sm:flex-row gap-2">
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void handleRenameSubmit(pk.id);
+                          }}
+                          className="flex flex-col sm:flex-row gap-2"
+                        >
                           <input
                             type="text"
+                            autoFocus
                             aria-label="新しいパスキー名"
                             maxLength={120}
                             value={editingName}
@@ -256,15 +349,15 @@ export function PasskeySettingsModal({
                           />
                           <div className="flex items-center gap-1.5">
                             <button
-                              type="button"
+                              type="submit"
                               disabled={savingRename}
-                              onClick={() => handleRenameSubmit(pk.id)}
                               className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer"
                             >
                               保存
                             </button>
                             <button
                               type="button"
+                              disabled={savingRename}
                               onClick={() => {
                                 setEditingId(null);
                                 setEditingName('');
@@ -274,7 +367,7 @@ export function PasskeySettingsModal({
                               キャンセル
                             </button>
                           </div>
-                        </div>
+                        </form>
                       ) : (
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -291,12 +384,13 @@ export function PasskeySettingsModal({
                             {!isConfirming && (
                               <button
                                 type="button"
+                                disabled={isBusy}
                                 onClick={() => {
                                   setEditingId(pk.id);
                                   setEditingName(pk.friendlyName ?? '');
                                 }}
                                 aria-label="名前変更"
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-100 cursor-pointer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-50 cursor-pointer"
                               >
                                 <Pencil className="w-3.5 h-3.5" />
                                 <span>名前変更</span>
@@ -307,7 +401,7 @@ export function PasskeySettingsModal({
                               <>
                                 <button
                                   type="button"
-                                  disabled={deletingId === pk.id}
+                                  disabled={isBusy}
                                   onClick={() => handleDelete(pk.id)}
                                   className="px-2.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer"
                                 >
@@ -315,8 +409,9 @@ export function PasskeySettingsModal({
                                 </button>
                                 <button
                                   type="button"
+                                  disabled={isBusy}
                                   onClick={() => setConfirmDeleteId(null)}
-                                  className="px-2 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-100 cursor-pointer"
+                                  className="px-2 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-50 cursor-pointer"
                                 >
                                   戻る
                                 </button>
@@ -324,9 +419,10 @@ export function PasskeySettingsModal({
                             ) : (
                               <button
                                 type="button"
+                                disabled={isBusy}
                                 onClick={() => setConfirmDeleteId(pk.id)}
                                 aria-label="削除"
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 cursor-pointer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 disabled:opacity-50 cursor-pointer"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                                 <span>削除</span>

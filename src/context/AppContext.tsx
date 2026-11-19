@@ -15,7 +15,8 @@ import {
 import {
   SupabaseAuthRepository,
   SupabaseQuizRepository,
-  consumeAuthRedirectError,
+  clearAuthRedirectErrorParams,
+  readAuthRedirectError,
 } from '../repositories/supabaseRepositories';
 import { LocalStudyRepository } from '../repositories/localStudyRepository';
 import { SupabaseStudyRepository } from '../repositories/supabaseStudyRepository';
@@ -58,6 +59,12 @@ interface AppProviderProps {
   studyRepository?: StudyRepository;
 }
 
+function isSameUser(a: User | null, b: User | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.id === b.id && a.email === b.email && a.createdAt === b.createdAt;
+}
+
 export function AppProvider({
   children,
   authRepository: customAuthRepo,
@@ -79,7 +86,15 @@ export function AppProvider({
 
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [authError, setAuthError] = useState<string | null>(() => consumeAuthRedirectError());
+  const [authError, setAuthError] = useState<string | null>(() => readAuthRedirectError());
+
+  const setStableUser = useCallback((nextUser: User | null) => {
+    setUser((prev) => (isSameUser(prev, nextUser) ? prev : nextUser));
+  }, []);
+
+  useEffect(() => {
+    clearAuthRedirectErrorParams();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -88,7 +103,7 @@ export function AppProvider({
     const unsubscribe = authRepository.onAuthStateChange?.((nextUser) => {
       if (!active) return;
       resolvedByListener = true;
-      setUser(nextUser);
+      setStableUser(nextUser);
       setAuthLoading(false);
     });
 
@@ -96,13 +111,13 @@ export function AppProvider({
       .getCurrentUser()
       .then((currentUser) => {
         if (active && !resolvedByListener) {
-          setUser(currentUser);
+          setStableUser(currentUser);
           setAuthLoading(false);
         }
       })
       .catch(() => {
         if (active && !resolvedByListener) {
-          setUser(null);
+          setStableUser(null);
           setAuthLoading(false);
         }
       });
@@ -111,7 +126,7 @@ export function AppProvider({
       active = false;
       unsubscribe?.();
     };
-  }, [authRepository]);
+  }, [authRepository, setStableUser]);
 
   const clearAuthError = useCallback(() => {
     setAuthError(null);
@@ -121,20 +136,20 @@ export function AppProvider({
     async (email: string, password: string) => {
       setAuthError(null);
       const signedIn = await authRepository.signIn(email, password);
-      setUser(signedIn);
+      setStableUser(signedIn);
       return signedIn;
     },
-    [authRepository],
+    [authRepository, setStableUser],
   );
 
   const signUp = useCallback(
     async (email: string, password: string, redirectPath?: string) => {
       setAuthError(null);
       const created = await authRepository.signUp(email, password, redirectPath);
-      setUser(created);
+      setStableUser(created);
       return created;
     },
-    [authRepository],
+    [authRepository, setStableUser],
   );
 
   const signInWithGoogle = useCallback(
@@ -151,9 +166,9 @@ export function AppProvider({
       throw new Error('パスキー認証はこの認証設定では利用できません。');
     }
     const signedIn = await authRepository.signInWithPasskey();
-    setUser(signedIn);
+    setStableUser(signedIn);
     return signedIn;
-  }, [authRepository]);
+  }, [authRepository, setStableUser]);
 
   const signOut = useCallback(async () => {
     setAuthError(null);

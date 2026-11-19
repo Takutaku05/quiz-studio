@@ -95,6 +95,17 @@ export function QuizPlayPage() {
   useEffect(() => {
     let active = true;
     async function load() {
+      setPhase('setup');
+      setReviewFilter('all');
+      setPreparedQuestions([]);
+      setCurrentIndex(0);
+      setAnswers({});
+      setSkippedCurrent(false);
+      setActiveSettings(null);
+      setSaveFailed(false);
+      setScrollToNextRequest(0);
+      setPendingSession(null);
+
       if (!userId || !quizId) {
         if (active) setLoading(false);
         return;
@@ -183,6 +194,7 @@ export function QuizPlayPage() {
     setSkippedCurrent(false);
     setActiveSettings(settings);
     setPendingSession(null);
+    setSaveFailed(false);
     setPhase('playing');
     // Starting anew overwrites any interrupted session without asking.
     persistSession(settings, prepared, {}, 0);
@@ -208,6 +220,7 @@ export function QuizPlayPage() {
     setAnswers(pendingSession.answers);
     setSkippedCurrent(false);
     setPendingSession(null);
+    setSaveFailed(false);
     if (pendingSession.currentIndex >= restored.length) {
       setCurrentIndex(restored.length - 1);
       finishSession();
@@ -306,6 +319,7 @@ export function QuizPlayPage() {
 
     if (mode === 'one_by_one') {
       setSkippedCurrent(true);
+      setScrollToNextRequest((prev) => prev + 1);
       return;
     }
     goToNextQuestion();

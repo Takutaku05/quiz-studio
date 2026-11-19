@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { waitFor } from '@testing-library/react';
 import { readFileAsArrayBuffer } from './csvParser';
 import { parseQuizUploadFile, parseXlsxBuffer, XLSX_MIME_TYPE } from './xlsxParser';
 import {
@@ -88,7 +89,13 @@ describe('xlsxTemplate', () => {
       expect(capturedBlob).toBeInstanceOf(Blob);
       expect(capturedBlob?.type).toBe(XLSX_MIME_TYPE);
       expect(clickSpy).toHaveBeenCalledTimes(1);
-      expect(revokeObjectURL).toHaveBeenCalledWith('blob:xlsx-template-url');
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+      await waitFor(
+        () => {
+          expect(revokeObjectURL).toHaveBeenCalledWith('blob:xlsx-template-url');
+        },
+        { timeout: 2500 },
+      );
       expect(XLSX_TEMPLATE_FILENAME).toBe('quiz_template.xlsx');
     } finally {
       URL.createObjectURL = originalCreateObjectURL;

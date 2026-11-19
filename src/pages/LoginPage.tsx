@@ -10,6 +10,7 @@ import {
   resolvePostAuthRedirect,
   savePendingShareToken,
 } from '../lib/shareRedirect';
+import { EmailConfirmationRequiredError } from '../repositories/supabaseRepositories';
 
 function GoogleIcon() {
   return (
@@ -51,6 +52,7 @@ export function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [pendingMethod, setPendingMethod] = useState<'password' | 'google' | 'passkey' | null>(
     null,
   );
@@ -108,6 +110,7 @@ export function LoginPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNotice(null);
     clearAuthError();
     setPendingMethod('password');
     try {
@@ -120,7 +123,14 @@ export function LoginPage() {
       }
       navigate(redirectTarget, { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : '認証に失敗しました。');
+      if (
+        err instanceof EmailConfirmationRequiredError ||
+        (err instanceof Error && err.name === 'EmailConfirmationRequiredError')
+      ) {
+        setNotice(err.message);
+      } else {
+        setError(err instanceof Error ? err.message : '認証に失敗しました。');
+      }
     } finally {
       setPendingMethod(null);
     }
@@ -128,6 +138,7 @@ export function LoginPage() {
 
   const handleGoogleSignIn = async () => {
     setError(null);
+    setNotice(null);
     clearAuthError();
     setPendingMethod('google');
     try {
@@ -138,13 +149,13 @@ export function LoginPage() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google認証に失敗しました。');
-    } finally {
       setPendingMethod(null);
     }
   };
 
   const handlePasskeySignIn = async () => {
     setError(null);
+    setNotice(null);
     clearAuthError();
     setPendingMethod('passkey');
     try {
@@ -242,6 +253,15 @@ export function LoginPage() {
             />
           </div>
 
+          {notice && (
+            <div
+              role="status"
+              className="rounded-xl bg-emerald-50 border border-emerald-200 px-3.5 py-2.5 text-sm text-emerald-800"
+            >
+              {notice}
+            </div>
+          )}
+
           {displayError && (
             <div
               role="alert"
@@ -254,7 +274,7 @@ export function LoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-semibold py-3 transition-colors cursor-pointer"
+            className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-semibold py-3 transition-colors cursor-pointer disabled:cursor-not-allowed"
           >
             {pendingMethod === 'password'
               ? '処理中...'
@@ -278,7 +298,7 @@ export function LoginPage() {
             type="button"
             onClick={handleGoogleSignIn}
             disabled={submitting}
-            className="w-full inline-flex items-center justify-center gap-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-700 font-medium py-2.5 px-4 transition-colors cursor-pointer"
+            className="w-full inline-flex items-center justify-center gap-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-700 font-medium py-2.5 px-4 transition-colors cursor-pointer disabled:cursor-not-allowed"
           >
             <GoogleIcon />
             <span>
@@ -292,7 +312,7 @@ export function LoginPage() {
                 type="button"
                 onClick={handlePasskeySignIn}
                 disabled={submitting}
-                className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-700 font-medium py-2.5 px-4 transition-colors cursor-pointer"
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60 text-slate-700 font-medium py-2.5 px-4 transition-colors cursor-pointer disabled:cursor-not-allowed"
               >
                 <KeyRound className="w-4 h-4 text-indigo-600 shrink-0" />
                 <span>
@@ -313,6 +333,8 @@ export function LoginPage() {
               onClick={() => {
                 setMode('signup');
                 setError(null);
+                setNotice(null);
+                setPendingMethod(null);
                 clearAuthError();
               }}
               className="text-sm font-medium text-indigo-600 hover:text-indigo-700 cursor-pointer"
@@ -325,6 +347,8 @@ export function LoginPage() {
               onClick={() => {
                 setMode('signin');
                 setError(null);
+                setNotice(null);
+                setPendingMethod(null);
                 clearAuthError();
               }}
               className="text-sm font-medium text-indigo-600 hover:text-indigo-700 cursor-pointer"

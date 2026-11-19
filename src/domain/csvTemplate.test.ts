@@ -5,6 +5,7 @@ import {
   CSV_TEMPLATE_FILENAME,
   downloadCsvTemplate,
   escapeCsvCell,
+  OBJECT_URL_REVOKE_DELAY_MS,
 } from './csvTemplate';
 
 describe('csvTemplate', () => {
@@ -68,11 +69,19 @@ describe('csvTemplate', () => {
       .mockImplementation(() => {});
 
     try {
+      vi.useFakeTimers();
       downloadCsvTemplate();
 
       expect(createObjectURL).toHaveBeenCalledTimes(1);
       expect(capturedBlob).toBeInstanceOf(Blob);
       expect(capturedBlob?.type).toContain('text/csv');
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+      // Object URL must not be revoked synchronously right after click (Safari/Firefox fix).
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(OBJECT_URL_REVOKE_DELAY_MS);
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:template-url');
+      vi.useRealTimers();
 
       const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
         const reader = new FileReader();
@@ -85,10 +94,9 @@ describe('csvTemplate', () => {
       expect(Array.from(bytes.slice(0, 3))).toEqual([0xef, 0xbb, 0xbf]);
       const text = new TextDecoder('utf-8').decode(bytes.slice(3));
       expect(text).toBe(buildCsvTemplateContent());
-      expect(clickSpy).toHaveBeenCalledTimes(1);
-      expect(revokeObjectURL).toHaveBeenCalledWith('blob:template-url');
       expect(CSV_TEMPLATE_FILENAME).toBe('quiz_template.csv');
     } finally {
+      vi.useRealTimers();
       URL.createObjectURL = originalCreateObjectURL;
       URL.revokeObjectURL = originalRevokeObjectURL;
       clickSpy.mockRestore();

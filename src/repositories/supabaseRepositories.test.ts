@@ -1,7 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  clearAuthRedirectErrorParams,
   consumeAuthRedirectError,
+  EmailConfirmationRequiredError,
+  readAuthRedirectError,
   SupabaseAuthRepository,
   SupabaseQuizRepository,
   toAuthErrorMessage,
@@ -29,6 +32,12 @@ describe('toAuthErrorMessage', () => {
     );
     expect(toAuthErrorMessage('access_denied')).toBe(
       'Googleログインがキャンセルされました。',
+    );
+    expect(toAuthErrorMessage('Email rate limit exceeded')).toBe(
+      '試行回数が多すぎます。しばらく待ってから再度お試しください。',
+    );
+    expect(toAuthErrorMessage('Password rate limit exceeded')).toBe(
+      '試行回数が多すぎます。しばらく待ってから再度お試しください。',
     );
   });
 });
@@ -121,6 +130,21 @@ describe('consumeAuthRedirectError', () => {
     );
     expect(window.location.hash).toBe('');
   });
+
+  it('separates pure error reading from history cleanup via readAuthRedirectError and clearAuthRedirectErrorParams', () => {
+    window.history.replaceState(
+      null,
+      '',
+      '/login?error=access_denied&error_description=User+denied+access&keep=1',
+    );
+
+    expect(readAuthRedirectError()).toBe('Googleログインがキャンセルされました。');
+    expect(window.location.search).toContain('error=access_denied');
+
+    clearAuthRedirectErrorParams();
+    expect(window.location.search).toBe('?keep=1');
+    expect(readAuthRedirectError()).toBeNull();
+  });
 });
 
 describe('SupabaseAuthRepository.signUp', () => {
@@ -139,7 +163,9 @@ describe('SupabaseAuthRepository.signUp', () => {
     const repo = new SupabaseAuthRepository(
       authClient({ data: { user: fakeUser, session: null }, error: null }),
     );
-    await expect(repo.signUp('a@example.com', 'secret1')).rejects.toThrow('確認メール');
+    await expect(repo.signUp('a@example.com', 'secret1')).rejects.toBeInstanceOf(
+      EmailConfirmationRequiredError,
+    );
   });
 
   it('rejects an existing email (user with no identities)', async () => {
@@ -215,6 +241,56 @@ describe('toPasskeyErrorMessage', () => {
         message: 'The RP ID is invalid',
       }),
     ).toContain('Relying Party');
+
+    expect(
+      toPasskeyErrorMessage({
+        name: 'AbortError',
+        message: 'signal is aborted without reason',
+      }),
+    ).toBe('パスキーの処理が中断されました。もう一度お試しください。');
+
+    expect(
+      toPasskeyErrorMessage({
+        code: 'ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY',
+        cause: { name: 'AbortError' },
+        message: 'aborted',
+      }),
+    ).toBe('パスキーの処理が中断されました。もう一度お試しください。');
+
+    expect(
+      toPasskeyErrorMessage({
+        code: 'ERROR_AUTHENTICATOR_GENERAL_ERROR',
+        message: 'General error',
+      }),
+    ).toContain('認証器でエラーが発生しました');
+
+    expect(
+      toPasskeyErrorMessage({
+        code: 'ERROR_AUTHENTICATOR_NO_SUPPORTED_PUBKEYCREDPARAMS_ALG',
+        message: 'No supported pubkey cred params alg',
+      }),
+    ).toContain('暗号方式に対応していません');
+
+    expect(
+      toPasskeyErrorMessage({
+        code: 'ERROR_MALFORMED_PUBKEYCREDPARAMS',
+        message: 'Malformed pubkey cred params',
+      }),
+    ).toContain('暗号方式に対応していません');
+
+    expect(
+      toPasskeyErrorMessage({
+        name: 'AuthSessionMissingError',
+        message: 'Auth session missing!',
+      }),
+    ).toContain('再度ログインしてください');
+
+    expect(
+      toPasskeyErrorMessage({
+        code: 'over_request_rate_limit',
+        message: 'Too many requests',
+      }),
+    ).toBe('試行回数が多すぎます。しばらく待ってから再度お試しください。');
   });
 });
 
@@ -252,6 +328,19 @@ describe('SupabaseAuthRepository passkey methods', () => {
     const repo = new SupabaseAuthRepository({ auth: {} } as unknown as SupabaseClient);
     expect(repo.isPasskeySupported()).toBe(false);
     await expect(repo.signInWithPasskey()).rejects.toThrow('対応していません');
+  });
+
+  it('requires navigator.credentials.create and get functions in isPasskeySupported', () => {
+    Object.defineProperty(window, 'PublicKeyCredential', {
+      configurable: true,
+      value: function MockPublicKeyCredential() {},
+    });
+    Object.defineProperty(navigator, 'credentials', {
+      configurable: true,
+      value: { get: vi.fn() },
+    });
+    const repo = new SupabaseAuthRepository({ auth: {} } as unknown as SupabaseClient);
+    expect(repo.isPasskeySupported()).toBe(false);
   });
 
   it('signs in with passkey and returns mapped User', async () => {
@@ -292,6 +381,29 @@ describe('SupabaseAuthRepository passkey methods', () => {
     expect(created).toEqual({
       id: 'pk-1',
       friendlyName: 'MacBook Touch ID',
+      createdAt: '2026-11-13T00:00:00Z',
+      lastUsedAt: null,
+    });
+  });
+
+  it('falls back to null friendlyName when passkey.update fails after registerPasskey', async () => {
+    enableMockWebAuthn();
+    const registerPasskey = vi.fn().mockResolvedValue({
+      data: { id: 'pk-2', created_at: '2026-11-13T00:00:00Z' },
+      error: null,
+    });
+    const update = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: 'update failed' },
+    });
+    const repo = new SupabaseAuthRepository({
+      auth: { registerPasskey, passkey: { update } },
+    } as unknown as SupabaseClient);
+
+    const created = await repo.registerPasskey('My Laptop');
+    expect(created).toEqual({
+      id: 'pk-2',
+      friendlyName: null,
       createdAt: '2026-11-13T00:00:00Z',
       lastUsedAt: null,
     });

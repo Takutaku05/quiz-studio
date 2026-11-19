@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { AppProvider } from '../context/AppContext';
 import type { Quiz, User } from '../domain/types';
@@ -421,5 +421,99 @@ describe('Bolt 12: QuizPlayPage study history & resume', () => {
     await waitFor(async () => {
       expect(await fx.studyRepo.getSession(fx.user.id, fx.quiz.id)).toBeNull();
     });
+  });
+
+  it('resets saveFailed warning when starting a new session from the result screen', async () => {
+    class ToggleFailingStudyRepository extends LocalStudyRepository {
+      shouldFail = true;
+      async recordAnswer(
+        userId: string,
+        input: Parameters<LocalStudyRepository['recordAnswer']>[1],
+      ): Promise<void> {
+        if (this.shouldFail) throw new Error('network down');
+        return super.recordAnswer(userId, input);
+      }
+      async saveSession(
+        userId: string,
+        session: Parameters<LocalStudyRepository['saveSession']>[1],
+      ): Promise<void> {
+        if (this.shouldFail) throw new Error('network down');
+        return super.saveSession(userId, session);
+      }
+    }
+
+    const repo = new ToggleFailingStudyRepository();
+    const fx = await createFixture(repo);
+    const ue = userEvent.setup();
+    renderPlay(fx);
+    await waitForSetup();
+
+    await ue.click(screen.getByRole('button', { name: 'スタート' }));
+    await ue.click(screen.getByRole('button', { name: 'はい' }));
+    expect(await screen.findByText('学習記録を保存できませんでした')).toBeInTheDocument();
+
+    await ue.click(screen.getByRole('button', { name: '次へ' }));
+    await ue.click(screen.getByRole('button', { name: 'ミカン' }));
+    await ue.click(screen.getByRole('button', { name: '結果を見る' }));
+
+    repo.shouldFail = false;
+    await ue.click(await screen.findByRole('button', { name: 'もう一度解く' }));
+    expect(screen.queryByText('学習記録を保存できませんでした')).not.toBeInTheDocument();
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+  });
+
+  it('resets playing state to setup when quizId route param changes without unmounting', async () => {
+    const fx = await createFixture();
+    const secondQuiz = await fx.quizRepo.create(fx.user.id, {
+      title: '2つ目の問題集',
+      questions: [
+        {
+          question: '第2の問題集のQ1',
+          choice1: '〇',
+          choice2: '✕',
+          choice3: null,
+          choice4: null,
+          answer: 1,
+          explanation: null,
+        },
+      ],
+    });
+
+    function Switcher({ targetQuizId }: { targetQuizId: string }) {
+      const navigate = useNavigate();
+      return (
+        <button type="button" onClick={() => navigate(`/quiz/${targetQuizId}`)}>
+          次の問題集へ切替
+        </button>
+      );
+    }
+
+    const ue = userEvent.setup();
+    render(
+      <AppProvider
+        authRepository={fx.authRepo}
+        quizRepository={fx.quizRepo}
+        studyRepository={fx.studyRepo}
+      >
+        <MemoryRouter initialEntries={[`/quiz/${fx.quiz.id}`]}>
+          <Switcher targetQuizId={secondQuiz.id} />
+          <Routes>
+            <Route path="/quiz/:quizId" element={<QuizPlayPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+
+    await waitForSetup();
+    await ue.click(screen.getByRole('button', { name: 'スタート' }));
+    expect(screen.getByText('2択の問題です')).toBeInTheDocument();
+
+    await ue.click(screen.getByRole('button', { name: '次の問題集へ切替' }));
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: '2つ目の問題集' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'スタート' })).toBeInTheDocument();
+    expect(screen.queryByText('2択の問題です')).not.toBeInTheDocument();
   });
 });
