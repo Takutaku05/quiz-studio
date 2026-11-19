@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import { KeyRound, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { PasskeyCredential } from '../domain/types';
 import type { AuthRepository } from '../repositories/types';
@@ -31,6 +31,12 @@ export function PasskeySettingsModal({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const wasOpenRef = useRef(false);
+  // 背景（オーバーレイ自身）で mousedown / mouseup が行われたかどうか。
+  // ダイアログ内と背景をまたいで押下・解放すると、click は共通祖先のオーバーレイで
+  // 発火する（target もオーバーレイになる）。click だけを見るとテキスト選択中などに
+  // 意図せずモーダルが閉じてしまうため、押下と解放の位置を個別に記録する。
+  const backdropPressStartedRef = useRef(false);
+  const backdropPressEndedRef = useRef(false);
 
   const webAuthnSupported = authRepository.isPasskeySupported
     ? authRepository.isPasskeySupported()
@@ -41,6 +47,24 @@ export function PasskeySettingsModal({
     if (isBusy) return;
     onClose();
   }, [isBusy, onClose]);
+
+  const handleBackdropMouseDown = (e: MouseEvent<HTMLDivElement>) => {
+    backdropPressStartedRef.current = e.target === e.currentTarget;
+  };
+
+  const handleBackdropMouseUp = (e: MouseEvent<HTMLDivElement>) => {
+    backdropPressEndedRef.current = e.target === e.currentTarget;
+  };
+
+  const handleBackdropClick = (e: MouseEvent<HTMLDivElement>) => {
+    const pressedOnBackdrop =
+      backdropPressStartedRef.current && backdropPressEndedRef.current;
+    backdropPressStartedRef.current = false;
+    backdropPressEndedRef.current = false;
+    // 押下・解放の両方が背景上で行われた場合のみ閉じる
+    if (e.target !== e.currentTarget || !pressedOnBackdrop) return;
+    handleSafeClose();
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -216,7 +240,9 @@ export function PasskeySettingsModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-      onClick={handleSafeClose}
+      onMouseDown={handleBackdropMouseDown}
+      onMouseUp={handleBackdropMouseUp}
+      onClick={handleBackdropClick}
     >
       <div
         ref={dialogRef}

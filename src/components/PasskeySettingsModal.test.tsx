@@ -188,6 +188,25 @@ describe('Bolt 07: PasskeySettingsModal', () => {
     await user.click(dialog.parentElement!);
     expect(onClose).toHaveBeenCalledTimes(2);
 
+    // Pressing inside the dialog (e.g. selecting text in an input) and releasing
+    // on the backdrop must not close the modal
+    const nameInput = screen.getByLabelText('パスキーの表示名（任意）');
+    const backdrop = dialog.parentElement!;
+    await user.pointer([
+      { keys: '[MouseLeft>]', target: nameInput },
+      { pointerName: 'mouse', target: backdrop },
+      { keys: '[/MouseLeft]', target: backdrop },
+    ]);
+    expect(onClose).toHaveBeenCalledTimes(2);
+
+    // Pressing on the backdrop and releasing inside the dialog must not close either
+    await user.pointer([
+      { keys: '[MouseLeft>]', target: backdrop },
+      { pointerName: 'mouse', target: nameInput },
+      { keys: '[/MouseLeft]', target: nameInput },
+    ]);
+    expect(onClose).toHaveBeenCalledTimes(2);
+
     // Unsubmitted friendlyName is cleared when modal closes and reopens
     await user.type(screen.getByLabelText('パスキーの表示名（任意）'), 'Draft Key');
     rerender(<PasskeySettingsModal isOpen={false} onClose={onClose} authRepository={repo} />);
