@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppProvider } from '../context/AppContext';
 import { LocalAuthRepository, LocalQuizRepository } from '../repositories/localStorageRepositories';
+import { EmailConfirmationRequiredError } from '../repositories/supabaseRepositories';
 import type { AuthRepository } from '../repositories/types';
 import { LoginPage } from './LoginPage';
 
@@ -205,5 +206,50 @@ describe('Bolt 04 & 06: LoginPage', () => {
 
     expect(signUpSpy).toHaveBeenCalledWith('student@example.com', 'password123', sharePath);
     expect(await screen.findByText('Share Import Route')).toBeInTheDocument();
+  });
+
+  it('shows email confirmation notice with role="status" instead of error alert on signUp', async () => {
+    const user = userEvent.setup();
+    const baseRepo = new LocalAuthRepository();
+    const mockAuthRepo: AuthRepository = {
+      getCurrentUser: () => baseRepo.getCurrentUser(),
+      signUp: vi.fn().mockRejectedValueOnce(new EmailConfirmationRequiredError()),
+      signIn: (e, p) => baseRepo.signIn(e, p),
+      signInWithGoogle: () => baseRepo.signInWithGoogle(),
+      signOut: () => baseRepo.signOut(),
+    };
+
+    renderLogin(['/login'], mockAuthRepo);
+
+    await user.click(screen.getByRole('button', { name: '新規登録はこちら' }));
+    await user.type(screen.getByLabelText('メールアドレス'), 'confirm@example.com');
+    await user.type(screen.getByLabelText('パスワード'), 'password123');
+    await user.click(screen.getByRole('button', { name: 'アカウント登録' }));
+
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent('確認メールを送信しました');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('keeps Google button in redirecting state after signInWithGoogle succeeds without changing email button label', async () => {
+    const user = userEvent.setup();
+    const baseRepo = new LocalAuthRepository();
+    const mockAuthRepo: AuthRepository = {
+      getCurrentUser: () => baseRepo.getCurrentUser(),
+      signUp: (e, p) => baseRepo.signUp(e, p),
+      signIn: (e, p) => baseRepo.signIn(e, p),
+      signInWithGoogle: vi.fn().mockResolvedValueOnce(undefined),
+      signOut: () => baseRepo.signOut(),
+    };
+
+    renderLogin(['/login'], mockAuthRepo);
+
+    await user.click(await screen.findByRole('button', { name: /Googleでログイン/ }));
+
+    expect(
+      await screen.findByRole('button', { name: /Googleへリダイレクト中\.\.\./ }),
+    ).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'ログイン' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '処理中...' })).not.toBeInTheDocument();
   });
 });

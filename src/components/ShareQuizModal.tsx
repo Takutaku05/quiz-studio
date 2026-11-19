@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { toString as renderQrSvg } from 'qrcode';
+import { triggerFileDownload } from '../domain/csvTemplate';
 import type { Quiz, QuizShare } from '../domain/types';
 import { buildShareUrl } from '../lib/shareRedirect';
 import type { QuizRepository } from '../repositories/types';
@@ -157,14 +158,7 @@ export function ShareQuizModal({
   const handleDownloadQr = () => {
     if (!qrSvg) return;
     const blob = new Blob([qrSvg], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${sanitizeFileName(quiz.title)}-qr.svg`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    triggerFileDownload(blob, `${sanitizeFileName(quiz.title)}-qr.svg`);
   };
 
   const runShareMutation = async (

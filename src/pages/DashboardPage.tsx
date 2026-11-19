@@ -34,6 +34,7 @@ export function DashboardPage() {
   const { user, authRepository, quizRepository, studyRepository, signOut } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
+  const userId = user?.id;
 
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [sessionsByQuiz, setSessionsByQuiz] = useState<Map<string, QuizSession>>(new Map());
@@ -45,6 +46,7 @@ export function DashboardPage() {
   const [sharingQuiz, setSharingQuiz] = useState<Quiz | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [downloadingXlsx, setDownloadingXlsx] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
   const [importNotice, setImportNotice] = useState<ImportSharedQuizResult | null>(() => {
     const state = location.state as { importNotice?: ImportSharedQuizResult } | null;
     return state?.importNotice ?? null;
@@ -59,15 +61,15 @@ export function DashboardPage() {
   }, [location.pathname, location.state, navigate]);
 
   const loadQuizzes = useCallback(async () => {
-    if (!user) return;
+    if (!userId) return;
     setLoading(true);
     try {
-      const list = await quizRepository.listByUser(user.id);
+      const list = await quizRepository.listByUser(userId);
       setQuizzes(list);
     } finally {
       setLoading(false);
     }
-  }, [quizRepository, user]);
+  }, [quizRepository, userId]);
 
   useEffect(() => {
     loadQuizzes();
@@ -75,9 +77,14 @@ export function DashboardPage() {
 
   // Study status is secondary: if it cannot be loaded, the list still shows without badges.
   useEffect(() => {
-    if (!user) return;
+    if (!userId || loading) return;
+    if (quizzes.length === 0) {
+      setSessionsByQuiz(new Map());
+      setStatsByQuiz(new Map());
+      return;
+    }
     let active = true;
-    Promise.all([studyRepository.listSessions(user.id), studyRepository.listStats(user.id)])
+    Promise.all([studyRepository.listSessions(userId), studyRepository.listStats(userId)])
       .then(([sessions, stats]) => {
         if (!active) return;
         setSessionsByQuiz(new Map(sessions.map((s) => [s.quizId, s])));
@@ -91,17 +98,17 @@ export function DashboardPage() {
     return () => {
       active = false;
     };
-  }, [quizzes, studyRepository, user]);
+  }, [loading, quizzes, studyRepository, userId]);
 
   const handleUploadSave = async (title: string, questions: ParsedQuestion[]) => {
-    if (!user) return;
-    await quizRepository.create(user.id, { title, questions });
+    if (!userId) return;
+    await quizRepository.create(userId, { title, questions });
     await loadQuizzes();
   };
 
   const handleDelete = async (quizId: string) => {
-    if (!user) return;
-    await quizRepository.delete(quizId, user.id);
+    if (!userId) return;
+    await quizRepository.delete(quizId, userId);
     setConfirmDeleteId(null);
     await loadQuizzes();
   };
@@ -114,10 +121,11 @@ export function DashboardPage() {
   const handleDownloadXlsxTemplate = async () => {
     if (downloadingXlsx) return;
     setDownloadingXlsx(true);
+    setTemplateError(null);
     try {
       await downloadXlsxTemplate();
     } catch {
-      // Ignore unexpected blob/download errors in headless environments.
+      setTemplateError('テンプレートExcelの生成に失敗しました。');
     } finally {
       setDownloadingXlsx(false);
     }
@@ -156,6 +164,23 @@ export function DashboardPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-6 sm:py-8">
+        {templateError && (
+          <div
+            role="alert"
+            className="mb-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 flex items-center justify-between gap-3 text-sm text-rose-700"
+          >
+            <span>{templateError}</span>
+            <button
+              type="button"
+              onClick={() => setTemplateError(null)}
+              aria-label="エラー通知を閉じる"
+              className="p-1 rounded-lg text-rose-600 hover:bg-rose-100 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {importNotice && (
           <div
             role="status"

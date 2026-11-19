@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   extractImportPayloadFromText,
+  MAX_TEXT_IMPORT_LENGTH,
   parseAndValidateJson,
   parseQuizTextInput,
 } from './jsonParser';
@@ -306,6 +307,52 @@ describe('Bolt 14: jsonParser & text import', () => {
       const emptyRes = parseQuizTextInput('   \n  ');
       expect(emptyRes.ok).toBe(false);
       expect(emptyRes.errors[0].message).toContain('空');
+    });
+
+    it('recovers fenced payloads when question or explanation contains inner ``` lines', () => {
+      const csvWithInnerFence = [
+        '問題を作りました：',
+        '```csv',
+        'question,choice1,choice2,choice3,choice4,answer,explanation',
+        '"次のコードの出力は？',
+        '```js',
+        'console.log(1)',
+        '```",1,2,,,1,"解説内にも',
+        '```',
+        'があります"',
+        '```',
+        '以上です。',
+      ].join('\n');
+
+      const csvRes = parseQuizTextInput(csvWithInnerFence);
+      expect(csvRes.ok).toBe(true);
+      expect(csvRes.format).toBe('csv');
+      expect(csvRes.questions).toHaveLength(1);
+      expect(csvRes.questions[0].question).toContain('console.log(1)');
+
+      const jsonWithInnerExampleFence = [
+        'まずは例示です：',
+        '```',
+        '例',
+        '```',
+        '以下が問題集です：',
+        '{"title":"コードクイズ","questions":[{"question":"```js\\nconsole.log(1)\\n```","choice1":"1","choice2":"2","answer":1}]}',
+      ].join('\n');
+
+      const jsonRes = parseQuizTextInput(jsonWithInnerExampleFence);
+      expect(jsonRes.ok).toBe(true);
+      expect(jsonRes.format).toBe('json');
+      expect(jsonRes.suggestedTitle).toBe('コードクイズ');
+      expect(jsonRes.questions).toHaveLength(1);
+    });
+
+    it('rejects pasted text exceeding MAX_TEXT_IMPORT_LENGTH', () => {
+      const tooLong = 'a'.repeat(MAX_TEXT_IMPORT_LENGTH + 1);
+      const res = parseQuizTextInput(tooLong);
+
+      expect(res.ok).toBe(false);
+      expect(res.questions).toEqual([]);
+      expect(res.errors[0].message).toContain('500,000');
     });
   });
 });

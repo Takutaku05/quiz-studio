@@ -1,13 +1,15 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { AppProvider } from '../context/AppContext';
+import type { User } from '../domain/types';
 import * as csvTemplate from '../domain/csvTemplate';
 import { XLSX_MIME_TYPE } from '../domain/xlsxParser';
 import * as xlsxTemplate from '../domain/xlsxTemplate';
 import { LocalAuthRepository, LocalQuizRepository } from '../repositories/localStorageRepositories';
 import { LocalStudyRepository } from '../repositories/localStudyRepository';
+import type { AuthRepository } from '../repositories/types';
 import { DashboardPage } from './DashboardPage';
 
 describe('Bolt 04: DashboardPage', () => {
@@ -176,6 +178,38 @@ describe('Bolt 04: DashboardPage', () => {
     downloadCsvSpy.mockRestore();
   });
 
+  it('shows error alert when downloading Excel template fails and allows dismissing it', async () => {
+    const user = userEvent.setup();
+    const authRepo = new LocalAuthRepository();
+    const quizRepo = new LocalQuizRepository();
+    await authRepo.signUp('xlsx-fail@example.com', 'password123');
+    const downloadXlsxSpy = vi
+      .spyOn(xlsxTemplate, 'downloadXlsxTemplate')
+      .mockRejectedValueOnce(new Error('export failed'));
+
+    try {
+      render(
+        <AppProvider authRepository={authRepo} quizRepository={quizRepo}>
+          <MemoryRouter initialEntries={['/']}>
+            <Routes>
+              <Route path="/" element={<DashboardPage />} />
+            </Routes>
+          </MemoryRouter>
+        </AppProvider>,
+      );
+
+      await user.click(await screen.findByRole('button', { name: 'テンプレートExcel' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'テンプレートExcelの生成に失敗しました。',
+      );
+
+      await user.click(screen.getByRole('button', { name: 'エラー通知を閉じる' }));
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    } finally {
+      downloadXlsxSpy.mockRestore();
+    }
+  });
+
   it('opens ShareQuizModal from quiz card and shows/dismisses importNotice banner', async () => {
     const user = userEvent.setup();
     const authRepo = new LocalAuthRepository();
@@ -279,6 +313,97 @@ describe('Bolt 13: DashboardPage study status', () => {
     expect(await within(studiedCard).findByText('進行中 (1 / 2問)')).toBeInTheDocument();
     expect(within(studiedCard).getByText('苦手（正答率60%以下）: 1問')).toBeInTheDocument();
     expect(within(freshCard).queryByText(/進行中|苦手/)).not.toBeInTheDocument();
+  });
+
+  it('fetches study status once when quizzes exist, skips when empty, and ignores identical user emissions', async () => {
+    const baseUser: User = {
+      id: 'stable-u1',
+      email: 'stable@example.com',
+      createdAt: '2026-11-13T00:00:00Z',
+    };
+    let authListener: ((u: User | null) => void) | undefined;
+    const authRepo: AuthRepository = {
+      getCurrentUser: async () => baseUser,
+      signUp: async () => baseUser,
+      signIn: async () => baseUser,
+      signInWithGoogle: async () => {},
+      signOut: async () => {},
+      onAuthStateChange: (cb) => {
+        authListener = cb;
+        cb(baseUser);
+        return () => {
+          authListener = undefined;
+        };
+      },
+    };
+
+    const quizRepo = new LocalQuizRepository();
+    const studyRepo = new LocalStudyRepository();
+    const listByUserSpy = vi.spyOn(quizRepo, 'listByUser');
+    const listSessionsSpy = vi.spyOn(studyRepo, 'listSessions');
+    const listStatsSpy = vi.spyOn(studyRepo, 'listStats');
+
+    // Case 1: 0 quizzes -> skips studyRepository queries completely
+    const emptyRender = render(
+      <AppProvider authRepository={authRepo} quizRepository={quizRepo} studyRepository={studyRepo}>
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+    expect(await screen.findByText('まだ問題集がありません')).toBeInTheDocument();
+    expect(listByUserSpy).toHaveBeenCalledTimes(1);
+    expect(listSessionsSpy).not.toHaveBeenCalled();
+    expect(listStatsSpy).not.toHaveBeenCalled();
+    emptyRender.unmount();
+
+    // Case 2: quizzes exist -> fetches study status once and does not refetch on TOKEN_REFRESHED
+    await quizRepo.create(baseUser.id, {
+      title: '安定フェッチテスト',
+      questions: [
+        {
+          question: 'Q1',
+          choice1: 'A',
+          choice2: 'B',
+          choice3: null,
+          choice4: null,
+          answer: 1,
+          explanation: null,
+        },
+      ],
+    });
+    listByUserSpy.mockClear();
+    listSessionsSpy.mockClear();
+    listStatsSpy.mockClear();
+
+    render(
+      <AppProvider authRepository={authRepo} quizRepository={quizRepo} studyRepository={studyRepo}>
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+          </Routes>
+        </MemoryRouter>
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText('安定フェッチテスト')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(listSessionsSpy).toHaveBeenCalledTimes(1);
+      expect(listStatsSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(listByUserSpy).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      authListener?.({ ...baseUser });
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(listByUserSpy).toHaveBeenCalledTimes(1);
+    expect(listSessionsSpy).toHaveBeenCalledTimes(1);
+    expect(listStatsSpy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('読み込み中...')).not.toBeInTheDocument();
   });
 });
 

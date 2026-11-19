@@ -78,7 +78,13 @@ describe('ShareQuizModal', () => {
       expect(capturedBlob).toBeInstanceOf(Blob);
       expect(capturedBlob?.type).toContain('image/svg+xml');
       expect(anchorClickSpy).toHaveBeenCalledTimes(1);
-      expect(revokeObjectUrlMock).toHaveBeenCalledWith('blob:qr-svg-url');
+      expect(revokeObjectUrlMock).not.toHaveBeenCalled();
+      await waitFor(
+        () => {
+          expect(revokeObjectUrlMock).toHaveBeenCalledWith('blob:qr-svg-url');
+        },
+        { timeout: 2500 },
+      );
     } finally {
       URL.createObjectURL = originalCreateObjectURL;
       URL.revokeObjectURL = originalRevokeObjectURL;

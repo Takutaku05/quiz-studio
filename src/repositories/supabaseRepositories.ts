@@ -101,6 +101,16 @@ function toQuiz(row: QuizRow): Quiz {
   };
 }
 
+/** Thrown by signUp when email confirmation is required before a session is issued. */
+export class EmailConfirmationRequiredError extends Error {
+  constructor(
+    message = '確認メールを送信しました。メール内のリンクを開いてから、ログインしてください。',
+  ) {
+    super(message);
+    this.name = 'EmailConfirmationRequiredError';
+  }
+}
+
 /** Map Supabase Auth error messages to the Japanese messages the UI shows. */
 export function toAuthErrorMessage(message: string): string {
   const m = message.toLowerCase();
@@ -126,23 +136,25 @@ export function toAuthErrorMessage(message: string): string {
   if (m.includes('email not confirmed')) {
     return 'メールアドレスの確認が完了していません。届いたメールのリンクを開いてください。';
   }
+  if (m.includes('rate limit')) {
+    return '試行回数が多すぎます。しばらく待ってから再度お試しください。';
+  }
   if (m.includes('password')) {
     return 'パスワードは6文字以上で入力してください。';
   }
   if (m.includes('email')) {
     return '有効なメールアドレスを入力してください。';
   }
-  if (m.includes('rate limit')) {
-    return '試行回数が多すぎます。しばらく待ってから再度お試しください。';
-  }
   return message;
 }
 
+const AUTH_REDIRECT_ERROR_KEYS = ['error', 'error_code', 'error_description'] as const;
+
 /**
- * Extract OAuth redirect error parameters from the current URL (query or hash),
- * clean them from browser history, and return a localized Japanese error message.
+ * Purely reads OAuth redirect error parameters from the current URL (query or hash)
+ * and returns a localized Japanese error message, or null when absent.
  */
-export function consumeAuthRedirectError(): string | null {
+export function readAuthRedirectError(): string | null {
   if (typeof window === 'undefined') return null;
 
   const url = new URL(window.location.href);
@@ -156,11 +168,27 @@ export function consumeAuthRedirectError(): string | null {
     return null;
   }
 
-  const hasHashError =
-    hashParams.has('error') ||
-    hashParams.has('error_code') ||
-    hashParams.has('error_description');
-  for (const key of ['error', 'error_code', 'error_description']) {
+  const raw = [errorCode, error, errorDescription].filter(Boolean).join(' ');
+  const mapped = toAuthErrorMessage(raw);
+  return mapped === raw ? (errorDescription ?? errorCode ?? error) : mapped;
+}
+
+/**
+ * Removes OAuth redirect error parameters (query and hash) from browser history.
+ */
+export function clearAuthRedirectErrorParams(): void {
+  if (typeof window === 'undefined') return;
+
+  const url = new URL(window.location.href);
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
+  const hasQueryError = AUTH_REDIRECT_ERROR_KEYS.some((key) => url.searchParams.has(key));
+  const hasHashError = AUTH_REDIRECT_ERROR_KEYS.some((key) => hashParams.has(key));
+
+  if (!hasQueryError && !hasHashError) {
+    return;
+  }
+
+  for (const key of AUTH_REDIRECT_ERROR_KEYS) {
     url.searchParams.delete(key);
     if (hasHashError) {
       hashParams.delete(key);
@@ -171,10 +199,16 @@ export function consumeAuthRedirectError(): string | null {
     url.hash = nextHash ? `#${nextHash}` : '';
   }
   window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+}
 
-  const raw = [errorCode, error, errorDescription].filter(Boolean).join(' ');
-  const mapped = toAuthErrorMessage(raw);
-  return mapped === raw ? (errorDescription ?? errorCode ?? error) : mapped;
+/**
+ * Extract OAuth redirect error parameters from the current URL (query or hash),
+ * clean them from browser history, and return a localized Japanese error message.
+ */
+export function consumeAuthRedirectError(): string | null {
+  const message = readAuthRedirectError();
+  clearAuthRedirectErrorParams();
+  return message;
 }
 
 const MAX_PASSKEY_NAME_LENGTH = 120;
@@ -218,8 +252,21 @@ export function toPasskeyErrorMessage(error: unknown): string {
   ) {
     return 'パスキーの操作がキャンセルされたか、タイムアウトしました。';
   }
-  if (code === 'error_ceremony_aborted') {
+  if (
+    code === 'error_ceremony_aborted' ||
+    name === 'aborterror' ||
+    causeName === 'aborterror'
+  ) {
     return 'パスキーの処理が中断されました。もう一度お試しください。';
+  }
+  if (code === 'error_authenticator_general_error') {
+    return '認証器でエラーが発生しました。端末の認証設定を確認してもう一度お試しください。';
+  }
+  if (
+    code === 'error_authenticator_no_supported_pubkeycredparams_alg' ||
+    code === 'error_malformed_pubkeycredparams'
+  ) {
+    return 'ご利用の認証器はこのパスキーの暗号方式に対応していません。';
   }
   if (code === 'error_authenticator_previously_registered') {
     return 'この認証器のパスキーは既に登録されています。';
@@ -247,6 +294,12 @@ export function toPasskeyErrorMessage(error: unknown): string {
   }
   if (code === 'invalid_credentials' || msg.includes('invalid login credentials') || msg.includes('passkey not found')) {
     return '登録済みのパスキーが見つからないか、認証に失敗しました。';
+  }
+  if (name === 'authsessionmissingerror' || msg.includes('auth session missing')) {
+    return 'ログインセッションの有効期限が切れました。再度ログインしてください。';
+  }
+  if (code === 'over_request_rate_limit') {
+    return '試行回数が多すぎます。しばらく待ってから再度お試しください。';
   }
   return errObj.message ? toAuthErrorMessage(errObj.message) : 'パスキー認証に失敗しました。';
 }
@@ -288,9 +341,7 @@ export class SupabaseAuthRepository implements AuthRepository {
       throw new Error('このメールアドレスは既に登録されています。');
     }
     if (!data.session || !data.user) {
-      throw new Error(
-        '確認メールを送信しました。メール内のリンクを開いてから、ログインしてください。',
-      );
+      throw new EmailConfirmationRequiredError();
     }
     return toUser(data.user);
   }
@@ -343,7 +394,8 @@ export class SupabaseAuthRepository implements AuthRepository {
       typeof window !== 'undefined' &&
       typeof window.PublicKeyCredential !== 'undefined' &&
       typeof navigator !== 'undefined' &&
-      Boolean(navigator.credentials)
+      typeof navigator.credentials?.create === 'function' &&
+      typeof navigator.credentials?.get === 'function'
     );
   }
 

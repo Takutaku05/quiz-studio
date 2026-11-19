@@ -7,6 +7,8 @@ import {
   validateQuestionRows,
 } from './csvParser';
 
+export const MAX_TEXT_IMPORT_LENGTH = 500_000;
+
 export interface JsonParseResult extends CsvParseResult {
   suggestedTitle: string | null;
 }
@@ -28,6 +30,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+const OPEN_FENCE_RE = /^[ \t]*(`{3,})[a-zA-Z0-9_-]*[ \t]*(.*)$/;
+const CLOSE_FENCE_RE = /^[ \t]*(`{3,})[ \t]*$/;
+
 /**
  * Extracts Markdown fenced code blocks from text.
  * Also supports truncated blocks missing their closing fence (e.g. long mobile ChatGPT outputs).
@@ -42,7 +47,7 @@ function extractCodeBlocks(text: string): string[] {
 
   for (const line of lines) {
     if (activeFence === null) {
-      const openMatch = line.match(/^[ \t]*(`{3,})[a-zA-Z0-9_-]*[ \t]*(.*)$/);
+      const openMatch = line.match(OPEN_FENCE_RE);
       if (openMatch) {
         const fence = openMatch[1];
         const trailing = openMatch[2] ?? '';
@@ -56,7 +61,7 @@ function extractCodeBlocks(text: string): string[] {
       continue;
     }
 
-    const closeMatch = line.match(/^[ \t]*(`{3,})[ \t]*$/);
+    const closeMatch = line.match(CLOSE_FENCE_RE);
     if (closeMatch && closeMatch[1].length >= activeFence.length) {
       blocks.push(currentLines.join('\n').trim());
       activeFence = null;
@@ -72,6 +77,60 @@ function extractCodeBlocks(text: string): string[] {
   }
 
   return blocks;
+}
+
+/**
+ * Fallback extraction when inner ``` lines (e.g. code snippets inside a question/explanation)
+ * split a single outer fenced block prematurely: takes everything between the first opening
+ * fence and the last matching closing fence (or end of text if unclosed).
+ */
+function extractOuterFenceBlock(text: string): string | null {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  let openIndex = -1;
+  let fenceLength = 0;
+  let openingTrailing = '';
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = lines[i].match(OPEN_FENCE_RE);
+    if (match) {
+      openIndex = i;
+      fenceLength = match[1].length;
+      openingTrailing = match[2] ?? '';
+      break;
+    }
+  }
+  if (openIndex === -1) return null;
+
+  let closeIndex = lines.length;
+  for (let i = lines.length - 1; i > openIndex; i -= 1) {
+    const match = lines[i].match(CLOSE_FENCE_RE);
+    if (match && match[1].length >= fenceLength) {
+      closeIndex = i;
+      break;
+    }
+  }
+
+  const bodyLines = lines.slice(openIndex + 1, closeIndex);
+  if (openingTrailing) {
+    bodyLines.unshift(openingTrailing);
+  }
+  const combined = bodyLines.join('\n').trim();
+  return combined || null;
+}
+
+function extractJsonBracketSpan(text: string): string | null {
+  const objStart = text.indexOf('{');
+  const arrStart = text.indexOf('[');
+  const starts = [objStart, arrStart].filter((idx) => idx >= 0);
+  if (starts.length === 0) return null;
+  const firstOpen = Math.min(...starts);
+
+  const objEnd = text.lastIndexOf('}');
+  const arrEnd = text.lastIndexOf(']');
+  const lastClose = Math.max(objEnd, arrEnd);
+  if (lastClose <= firstOpen) return null;
+
+  return text.slice(firstOpen, lastClose + 1).trim();
 }
 
 function toRawTextValue(
@@ -279,19 +338,49 @@ function resolveBlockCandidates(text: string): {
   const trimmed = text.replace(/^\uFEFF/, '').trim();
   const blocks = extractCodeBlocks(trimmed);
   if (blocks.length === 0) {
+    const direct = parseSinglePayload(trimmed);
+    if (!direct.ok) {
+      const span = extractJsonBracketSpan(trimmed);
+      if (span && span !== trimmed) {
+        const spanResult = parseSinglePayload(span);
+        if (spanResult.ok) {
+          return { blocks: [span], results: [spanResult], chosenIndex: 0 };
+        }
+      }
+    }
     return {
       blocks: [trimmed],
-      results: [parseSinglePayload(trimmed)],
+      results: [direct],
       chosenIndex: 0,
     };
   }
 
   const results = blocks.map((block) => parseSinglePayload(block));
   const validIndex = results.findIndex((res) => res.ok);
+  if (validIndex >= 0) {
+    return { blocks, results, chosenIndex: validIndex };
+  }
+
+  // Fallback when inner ``` lines broke the fenced block or JSON sits inside prose/fences.
+  const fallbacks = [extractOuterFenceBlock(trimmed), extractJsonBracketSpan(trimmed)].filter(
+    (candidate): candidate is string =>
+      candidate !== null && candidate.length > 0 && !blocks.includes(candidate),
+  );
+  for (const candidate of fallbacks) {
+    const res = parseSinglePayload(candidate);
+    if (res.ok) {
+      return {
+        blocks: [...blocks, candidate],
+        results: [...results, res],
+        chosenIndex: blocks.length,
+      };
+    }
+  }
+
   return {
     blocks,
     results,
-    chosenIndex: validIndex >= 0 ? validIndex : 0,
+    chosenIndex: 0,
   };
 }
 
@@ -303,6 +392,22 @@ export function extractImportPayloadFromText(text: string): string {
 }
 
 export function parseQuizTextInput(text: string): TextImportParseResult {
+  if (text.length > MAX_TEXT_IMPORT_LENGTH) {
+    return {
+      ok: false,
+      format: 'csv',
+      suggestedTitle: null,
+      questions: [],
+      errors: [
+        {
+          row: 1,
+          message:
+            '入力テキストが長すぎます（上限 500,000 文字）。問題数を減らして再度お試しください。',
+        },
+      ],
+    };
+  }
+
   const trimmed = text.replace(/^\uFEFF/, '').trim();
   if (!trimmed) {
     return {

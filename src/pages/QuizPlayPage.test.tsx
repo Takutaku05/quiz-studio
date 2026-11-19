@@ -189,6 +189,28 @@ describe('Bolt 05: QuizPlayPage', () => {
       expect(calls).toHaveLength(2);
       expect(calls.every((c) => c.element === screen.getByRole('button', { name: '次へ' }))).toBe(true);
     });
+
+    it('scrolls the next button into view when skipping in one-by-one mode', async () => {
+      const calls = spyScrollIntoView();
+      const user = userEvent.setup();
+      await setupQuizPlay();
+      await screen.findByRole('heading', { level: 1, name: 'サンプルテスト' });
+      await user.click(screen.getByRole('button', { name: 'スタート' }));
+      expect(calls).toHaveLength(0);
+
+      await user.click(screen.getByRole('button', { name: 'スキップ' }));
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0].element).toBe(screen.getByRole('button', { name: '次へ' }));
+      expect(calls[0].options).toMatchObject({ block: 'nearest' });
+
+      await user.click(screen.getByRole('button', { name: '次へ' }));
+      expect(calls).toHaveLength(1);
+
+      await user.click(screen.getByRole('button', { name: 'スキップ' }));
+      expect(calls).toHaveLength(2);
+      expect(calls[1].element).toBe(screen.getByRole('button', { name: '結果を見る' }));
+    });
   });
 
   it('shows not-found message when quiz does not exist', async () => {

@@ -15,6 +15,10 @@ import type { ParsedQuestion } from './types';
 export const XLSX_MIME_TYPE =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
+export const MAX_UPLOAD_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+const FILE_TOO_LARGE_MESSAGE =
+  'ファイルサイズが大きすぎます（上限 5MB）。5MB 以下のファイルを選択してください。';
+
 export interface ParsedSheetResult {
   name: string;
   result: CsvParseResult;
@@ -180,7 +184,27 @@ export async function parseXlsxBuffer(buffer: ArrayBuffer): Promise<XlsxParseRes
   }
 }
 
+function inferUploadSourceType(file: File): QuizUploadSourceType {
+  const lowerName = file.name.trim().toLowerCase();
+  if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls') || file.type === XLSX_MIME_TYPE) {
+    return 'xlsx';
+  }
+  if (lowerName.endsWith('.json') || file.type === 'application/json' || file.type === 'text/json') {
+    return 'json';
+  }
+  return 'csv';
+}
+
 export async function parseXlsxFile(file: File): Promise<XlsxParseResult> {
+  if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
+    return {
+      ok: false,
+      sheets: [],
+      selectedSheetName: null,
+      questions: [],
+      errors: [{ row: 1, message: FILE_TOO_LARGE_MESSAGE }],
+    };
+  }
   const buffer = await readFileAsArrayBuffer(file);
   return parseXlsxBuffer(buffer);
 }
@@ -197,6 +221,18 @@ function isZipMagicBytes(buffer: ArrayBuffer): boolean {
 }
 
 export async function parseQuizUploadFile(file: File): Promise<QuizUploadParseResult> {
+  if (file.size > MAX_UPLOAD_FILE_SIZE_BYTES) {
+    return {
+      ok: false,
+      sourceType: inferUploadSourceType(file),
+      suggestedTitle: null,
+      sheets: [],
+      selectedSheetName: null,
+      questions: [],
+      errors: [{ row: 1, message: FILE_TOO_LARGE_MESSAGE }],
+    };
+  }
+
   const lowerName = file.name.trim().toLowerCase();
 
   if (lowerName.endsWith('.xls')) {
