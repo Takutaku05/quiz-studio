@@ -46,3 +46,4 @@ Supabase（Auth + PostgreSQL + RLS）実装と `localStorage` 実装をリポジ
 | Bolt 13 | ダッシュボード: 進行中・苦手問題数 | UI (Dashboard) | `進行中 (n / m問)`、`苦手（正答率60%以下）: ◯問` |
 | Bolt 14 | ChatGPT プロジェクト連携 & テキスト貼り付け取込 | Domain / UI | コードブロック抽出、JSON/CSV 貼り付け、クリップボード取込、`.json` 取込、プロンプトコピー |
 | Bolt 15 | 「AIで問題集を作る」2ステップ導線 | UI (Dashboard / Modal) | ダッシュボード「AIで問題集を作る」ボタン、プロンプトコピー画面→結果貼り付け画面への遷移、貼り付け画面上部の再コピーボタン |
+| Bolt 16 | PWA 化（ホーム画面に追加） | Static Assets / Infra | Web App Manifest、`index.html` の iOS 用メタタグ、キャッシュなし Service Worker と本番のみの登録処理 |

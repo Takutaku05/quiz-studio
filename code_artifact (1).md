@@ -1,6 +1,6 @@
 # 要件定義書（System Requirements Document）
 
-> 最終更新: 2026-11-18（「AIで問題集を作る」2ステップ導線・プロンプトコピー後の貼り付け画面遷移を反映。詳細は `docs/requirements-chatgpt-import.md` および `docs/requirements-review-and-resume.md`）
+> 最終更新: 2026-11-20（ホーム画面に追加して standalone 表示で使える PWA 化を反映。詳細は `docs/requirements-pwa.md`。「AIで問題集を作る」導線は `docs/requirements-chatgpt-import.md`、学習履歴・途中再開は `docs/requirements-review-and-resume.md`）
 
 ## 1. システムアーキテクチャ構成
 
@@ -16,6 +16,7 @@
 | **QRコード生成** | qrcode | 共有URLのQRコードをSVGで生成する。 |
 | **認証 (Auth)** | Supabase Auth | メールアドレス＋パスワード、Google OAuth、パスキー（WebAuthn）によるユーザー認証とセッション管理。 |
 | **データベース (DB)** | Supabase Database (PostgreSQL) | 問題集・問題・共有設定の永続化。RLS（Row Level Security）によるユーザー単位のアクセス制御。 |
+| **PWA** | Web App Manifest + Service Worker（キャッシュなし） | ホーム画面に追加して standalone 表示で起動するため。Service Worker はインストール条件を満たす目的のみで、`fetch` を横取りしない（3.6 参照）。 |
 
 ## 2. 画面構成と画面遷移
 
@@ -288,3 +289,12 @@ CSV・Excel（`.xlsx`）・JSON（`.json`）・テキスト貼り付け（CSV / 
 | `get_shared_quiz_summary` | 未ログイン含む全員 | 有効なトークンから問題集のタイトルと問題数のみを返す（問題本文は返さない） |
 | `import_shared_quiz` | ログインユーザー | 共有問題集を呼び出したユーザーのアカウントへコピーする |
 | `record_question_answer` | ログインユーザー（自分の問題のみ） | 1問の正誤を累積成績に加算する |
+
+### 3.6 PWA（ホーム画面に追加）仕様
+
+詳細は `docs/requirements-pwa.md` を参照。
+
+* `public/manifest.webmanifest` で `name` / `short_name` = `Quiz Studio`、`start_url` / `scope` = `/`、`display: standalone`、`theme_color: #4f46e5`、`background_color: #f8fafc`、アイコン（192 / 512 PNG、`any` と `maskable`）を指定する。
+* `index.html` に manifest リンク、`theme-color`、iOS 用メタタグ（`apple-mobile-web-app-capable`、`apple-mobile-web-app-title`、`apple-mobile-web-app-status-bar-style: default`）を置く。`viewport-fit=cover` は指定せず、ノッチ・ホームインジケーター部分は OS が余白として確保する。
+* Service Worker（`/sw.js`）は本番ビルドでのみ `load` 後に登録する。`fetch` ハンドラーを持たずキャッシュもしないため、オフラインでは動かない。認証リダイレクト・Supabase API・共有 URL には影響しない。
+* Web Push 通知・オフライン対応は対象外。
