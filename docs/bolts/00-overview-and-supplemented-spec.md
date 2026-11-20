@@ -47,3 +47,4 @@ Supabase（Auth + PostgreSQL + RLS）実装と `localStorage` 実装をリポジ
 | Bolt 14 | ChatGPT プロジェクト連携 & テキスト貼り付け取込 | Domain / UI | コードブロック抽出、JSON/CSV 貼り付け、クリップボード取込、`.json` 取込、プロンプトコピー |
 | Bolt 15 | 「AIで問題集を作る」2ステップ導線 | UI (Dashboard / Modal) | ダッシュボード「AIで問題集を作る」ボタン、プロンプトコピー画面→結果貼り付け画面への遷移、貼り付け画面上部の再コピーボタン |
 | Bolt 16 | PWA 化（ホーム画面に追加） | Static Assets / Infra | Web App Manifest、`index.html` の iOS 用メタタグ、キャッシュなし Service Worker と本番のみの登録処理 |
+| Bolt 17 | 「ホーム画面に追加」の案内 | Presentation | スマホ・iPad のダッシュボードに案内バナー。Android は `beforeinstallprompt` のボタン、iOS は手順表示、30 日間の非表示 |
