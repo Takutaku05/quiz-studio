@@ -22,6 +22,8 @@ CSV / Excel / JSON や生成AI（ChatGPT）の出力テキストから問題集�
 - **認証 & ローカル動作モード**
   - メール＋パスワード、Google OAuth、パスキー（WebAuthn）に対応
   - Supabase 環境変数が未設定の環境では自動的に `localStorage` モードへフォールバックし、バックエンド準備なしですぐに試用可能
+- **ホーム画面に追加（PWA）**
+  - iPhone / Android のホーム画面に追加すると、アドレスバーのない standalone 表示でアプリのように起動（プッシュ通知・オフライン対応はなし）
 
 ---
 
