@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { AiQuizCreationModal } from '../components/AiQuizCreationModal';
 import { CsvUploadModal } from '../components/CsvUploadModal';
+import { InstallAppBanner } from '../components/InstallAppBanner';
 import { PasskeySettingsModal } from '../components/PasskeySettingsModal';
 import { ShareQuizModal } from '../components/ShareQuizModal';
 import { useApp } from '../context/AppContext';
@@ -164,6 +165,8 @@ export function DashboardPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-6 sm:py-8">
+        <InstallAppBanner />
+
         {templateError && (
           <div
             role="alert"

@@ -1,6 +1,6 @@
 # 要件定義書（System Requirements Document）
 
-> 最終更新: 2026-11-20（ホーム画面に追加して standalone 表示で使える PWA 化を反映。詳細は `docs/requirements-pwa.md`。「AIで問題集を作る」導線は `docs/requirements-chatgpt-import.md`、学習履歴・途中再開は `docs/requirements-review-and-resume.md`）
+> 最終更新: 2026-11-20（ホーム画面に追加して standalone 表示で使える PWA 化と、スマホ・iPad 向けの「ホーム画面に追加」案内を反映。詳細は `docs/requirements-pwa.md`。「AIで問題集を作る」導線は `docs/requirements-chatgpt-import.md`、学習履歴・途中再開は `docs/requirements-review-and-resume.md`）
 
 ## 1. システムアーキテクチャ構成
 
@@ -297,4 +297,5 @@ CSV・Excel（`.xlsx`）・JSON（`.json`）・テキスト貼り付け（CSV / 
 * `public/manifest.webmanifest` で `name` / `short_name` = `Quiz Studio`、`start_url` / `scope` = `/`、`display: standalone`、`theme_color: #4f46e5`、`background_color: #f8fafc`、アイコン（192 / 512 PNG、`any` と `maskable`）を指定する。
 * `index.html` に manifest リンク、`theme-color`、iOS 用メタタグ（`apple-mobile-web-app-capable`、`apple-mobile-web-app-title`、`apple-mobile-web-app-status-bar-style: default`）を置く。`viewport-fit=cover` は指定せず、ノッチ・ホームインジケーター部分は OS が余白として確保する。
 * Service Worker（`/sw.js`）は本番ビルドでのみ `load` 後に登録する。`fetch` ハンドラーを持たずキャッシュもしないため、オフラインでは動かない。認証リダイレクト・Supabase API・共有 URL には影響しない。
+* スマホ・iPad のブラウザでダッシュボードを開いたときだけ、上部に「ホーム画面に追加」の案内を出す。Android は `beforeinstallprompt` を保持してボタンからインストール確認を出し、iPhone / iPad は共有ボタンからの手順を表示する。ホーム画面から起動中・PC では出さず、「閉じる」を押すと 30 日間出さない。
 * Web Push 通知・オフライン対応は対象外。
